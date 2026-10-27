@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gmail-forensic-toolkit"
+version = "2.0.0"
+description = "Archive Gmail messages locally as forensic Markdown reports, classify them, and organise them with Gmail labels."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "enonymous1" }]
+keywords = ["gmail", "email", "forensics", "cli", "google-api"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+]
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.2",
+    "markdownify>=0.13",
+    "PyYAML>=6.0",
+    "python-dateutil>=2.8",
+    "typer>=0.9",
+]
+
+[project.scripts]
+gmail-toolkit = "gmail_toolkit.cli.main:main"
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0",
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/enonymous1/gmail-forensic-toolkit"
+Repository = "https://github.com/enonymous1/gmail-forensic-toolkit"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# B008: typer.Option/typer.Argument in defaults is the documented Typer idiom.
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

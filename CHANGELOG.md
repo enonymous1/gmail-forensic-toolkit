@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.1.0 — 2026-10-28
+
+Fold-in of the `ss-gmail` project's two capabilities the toolkit lacked:
+the Gmail label inventory and Google Calendar exports. Everything else in
+`ss-gmail` was already covered here (sender/message fetching, label
+application via `batchModify`) or deliberately left behind (its Flask and
+Django UIs, its broken imports and hardcoded paths, and its committed
+mailbox data). The original `ss-gmail` zip/history must not be pushed.
+
+### Added
+
+- `gmail-toolkit labels inventory`: lists every Gmail label and writes the
+  list response to `exports/labels/labels.json`, with a printed table
+  including each label's message total.
+- `gmail-toolkit labels details`: fetches every label's full detail, writes
+  one JSON file per label plus `joined_label_details.json`, and skips (and
+  counts) labels whose detail request fails instead of aborting.
+- `gmail-toolkit calendar calendars|upcoming|events`: Calendar exports as
+  CSV under `exports/calendar/` — every calendar, the next events on one
+  calendar (bounded below by now), and every event of one calendar or all
+  calendars (`--all`), following every page. Missing event fields become
+  empty cells; all-day events use their `date` start/end.
+- `calendar.readonly` scope and `get_calendar_service()` in `auth.py`,
+  sharing the Gmail credential/token paths and refresh/re-auth handling.
+  A token granted before this release needs deleting and a fresh sign-in
+  before the first `calendar` command.
+- 14 offline tests (fake Calendar service, fake label details, CLI
+  end-to-end) — 51 tests total.
+
+### Changed
+
+- Auth internals factored into one `_authenticate()` helper shared by the
+  Gmail and Calendar service builders; `get_gmail_service()` behaviour is
+  unchanged.
+- Project description and keywords now mention the label inventory and
+  Calendar exports.
+
 ## 2.0.0 — 2026-10-27
 
 Full modernization of the 1.0.0 Gmail Forensic Toolkit.

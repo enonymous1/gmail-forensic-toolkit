@@ -95,12 +95,28 @@ class FakeMessages:
 
 
 class FakeLabels:
-    def __init__(self, labels: list[dict[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        labels: list[dict[str, str]] | None = None,
+        details: dict[str, dict[str, Any] | Exception] | None = None,
+    ) -> None:
         self.labels = labels or []
+        self.details = details or {}
         self.created: list[dict[str, Any]] = []
+        self.get_calls: list[str] = []
 
     def list(self, **kwargs: Any) -> _Request:
         return _Request({"labels": self.labels})
+
+    def get(self, **kwargs: Any) -> _Request:
+        label_id = kwargs["id"]
+        self.get_calls.append(label_id)
+        detail = self.details.get(label_id)
+        if isinstance(detail, Exception):
+            return _Request(None, error=detail)
+        if detail is not None:
+            return _Request(detail)
+        return _Request({"id": label_id, "name": label_id})
 
     def create(self, **kwargs: Any) -> _Request:
         body = kwargs["body"]
@@ -122,15 +138,63 @@ class FakeUsers:
         return self._labels
 
 
+class FakeCalendarList:
+    def __init__(self, calendars: list[dict[str, Any]] | None = None) -> None:
+        self.calendars = calendars or []
+        self.list_calls: list[dict[str, Any]] = []
+
+    def list(self, **kwargs: Any) -> _Request:
+        self.list_calls.append(kwargs)
+        return _Request({"items": self.calendars})
+
+
+class FakeEvents:
+    """Records events().list calls; pages are keyed by pageToken."""
+
+    def __init__(self, pages: dict[str | None, dict[str, Any]] | None = None) -> None:
+        self.pages = pages or {None: {"items": []}}
+        self.list_calls: list[dict[str, Any]] = []
+
+    def list(self, **kwargs: Any) -> _Request:
+        self.list_calls.append(kwargs)
+        page = self.pages.get(kwargs.get("pageToken"))
+        if page is None:
+            page = {"items": []}
+        items = list(page.get("items", []) or [])
+        if kwargs.get("maxResults") is not None:
+            items = items[: kwargs["maxResults"]]
+        result = {"items": items}
+        if page.get("nextPageToken"):
+            result["nextPageToken"] = page["nextPageToken"]
+        return _Request(result)
+
+
+class FakeCalendarService:
+    def __init__(
+        self,
+        calendars: list[dict[str, Any]] | None = None,
+        event_pages: dict[str | None, dict[str, Any]] | None = None,
+    ) -> None:
+        self.calendar_list_api = FakeCalendarList(calendars)
+        self.events_api = FakeEvents(event_pages)
+
+    def calendarList(self) -> FakeCalendarList:
+        return self.calendar_list_api
+
+    def events(self) -> FakeEvents:
+        return self.events_api
+
+
 class FakeService:
     def __init__(
         self,
         pages: dict[str | None, dict[str, Any]] | None = None,
         messages: dict[str, dict[str, Any]] | None = None,
         labels: list[dict[str, str]] | None = None,
+        label_details: dict[str, dict[str, Any] | Exception] | None = None,
     ) -> None:
         self.messages_api = FakeMessages(pages, messages)
-        self.labels_api = FakeLabels(labels)
+        self.labels_api = FakeLabels(labels, label_details)
 
     def users(self) -> FakeUsers:
         return FakeUsers(self.messages_api, self.labels_api)
@@ -146,4 +210,38 @@ def fake_service(payload: dict[str, Any]) -> FakeService:
     return FakeService(
         pages={None: {"messages": [{"id": "msg-1"}]}},
         messages={"msg-1": payload},
+    )
+
+
+@pytest.fixture
+def fake_calendar_service() -> FakeCalendarService:
+    return FakeCalendarService(
+        calendars=[
+            {"id": "primary", "summary": "Fictional Calendar"},
+            {"id": "team@example.com", "summary": "Team Calendar"},
+        ],
+        event_pages={
+            None: {
+                "items": [
+                    {
+                        "summary": "Fictional Standup",
+                        "start": {"dateTime": "2026-10-28T09:00:00-04:00"},
+                        "end": {"dateTime": "2026-10-28T09:30:00-04:00"},
+                        "description": "Daily sync",
+                        "location": "Room 1",
+                        "status": "confirmed",
+                        "creator": {"email": "organizer@example.com"},
+                        "organizer": {"email": "organizer@example.com"},
+                        "attendees": [{"email": "attendee@example.com"}],
+                    },
+                    {
+                        "summary": "All-day Fictional Holiday",
+                        "start": {"date": "2026-10-29"},
+                        "end": {"date": "2026-10-30"},
+                    },
+                ],
+                "nextPageToken": "p2",
+            },
+            "p2": {"items": []},
+        },
     )

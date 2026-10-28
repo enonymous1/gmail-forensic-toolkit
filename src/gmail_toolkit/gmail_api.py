@@ -128,6 +128,58 @@ def get_message_metadata(
     return execute_with_retry(partial(_get_metadata, service, message_id, headers))
 
 
+def _get_label_page(service: Any, page_token: str | None) -> Any:
+    return service.users().labels().list(userId="me", pageToken=page_token).execute()
+
+
+def list_labels(service: Any) -> list[dict[str, Any]]:
+    """Return every label, following every page of the list response.
+
+    The list response carries only each label's ``id`` and ``name``; use
+    :func:`get_label` for the full detail (counts, visibility, colour).
+    """
+    labels: list[dict[str, Any]] = []
+    page_token: str | None = None
+    while True:
+        response = execute_with_retry(partial(_get_label_page, service, page_token))
+        labels.extend(response.get("labels", []) or [])
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return labels
+
+
+def _fetch_label(service: Any, label_id: str) -> Any:
+    return service.users().labels().get(userId="me", id=label_id).execute()
+
+
+def get_label(service: Any, label_id: str) -> dict[str, Any]:
+    """Fetch one label's full detail, retrying transient failures."""
+    return execute_with_retry(partial(_fetch_label, service, label_id))
+
+
+def fetch_label_details(
+    service: Any, labels: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Fetch the detail of every label in *labels*, skipping failures.
+
+    A label whose detail request fails even after retries (for example a
+    label deleted between the list and the get) is skipped rather than
+    aborting the whole inventory: the caller can compare the result length
+    with the input length to see how many were skipped.
+    """
+    details: list[dict[str, Any]] = []
+    for label in labels:
+        label_id = label.get("id")
+        if not label_id:
+            continue
+        try:
+            details.append(get_label(service, str(label_id)))
+        except HttpError:
+            continue
+    return details
+
+
 def _list_labels(service: Any, page_token: str | None) -> Any:
     return service.users().labels().list(userId="me", pageToken=page_token).execute()
 

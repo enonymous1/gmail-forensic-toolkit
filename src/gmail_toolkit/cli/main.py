@@ -8,7 +8,9 @@ from .. import __version__
 from . import (
     archive_sender,
     batch_archive,
+    calendar,
     get_digest,
+    labels,
     organize_sender,
     restore_metadata,
     scrape_senders,
@@ -42,6 +44,8 @@ app.add_typer(organize_sender.app, name="organize")
 app.add_typer(batch_archive.app, name="batch")
 app.add_typer(get_digest.app, name="digest")
 app.add_typer(restore_metadata.app, name="restore")
+app.add_typer(labels.app, name="labels")
+app.add_typer(calendar.app, name="calendar")
 
 
 def main() -> None:

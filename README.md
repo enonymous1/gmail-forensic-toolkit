@@ -5,9 +5,11 @@
 
 Archive a Gmail mailbox locally as forensic Markdown, classify what you
 archived, and organise it with Gmail labels — from one CLI, with nothing
-uploaded anywhere. Every report is generated on your machine from the Gmail
-API payload, and the raw JSON, HTML, and plain-text sources are cached
-alongside it so reports can be rebuilt offline later.
+uploaded anywhere. The same CLI also exports the Gmail label inventory
+as JSON and Google Calendar calendars and events as CSV. Every report is
+generated on your machine from the Gmail API payload, and the raw JSON,
+HTML, and plain-text sources are cached alongside it so reports can be
+rebuilt offline later.
 
 ## What it does
 
@@ -25,6 +27,14 @@ alongside it so reports can be rebuilt offline later.
 - **Digest** recent mailbox activity in a one-line-per-message table.
 - **Restore** forensic Markdown from cached JSON payloads, without touching
   the Gmail API at all.
+- **Labels** — export the whole label inventory: `labels inventory` writes
+  the list response to `exports/labels/labels.json`, and `labels details`
+  writes one JSON file per label plus a joined file, with per-label counts.
+  Read-only.
+- **Calendar** — export Google Calendar data as CSV: `calendar calendars`
+  lists every calendar, `calendar upcoming` exports the next events on one
+  calendar, and `calendar events --all` exports every event of every
+  calendar. Read-only (`calendar.readonly`).
 
 Example report header, generated from a synthetic fixture message (not a
 real mailbox):
@@ -68,7 +78,8 @@ the same way.
 ## Gmail setup (one time)
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a
-   project and enable the Gmail API.
+   project and enable the Gmail API. For the calendar commands, enable
+   the Google Calendar API too.
 2. Create an OAuth2 credential of type **Desktop application** and download
    it as JSON.
 3. Place it at `credentials/credentials.json` in the directory you run the
@@ -78,22 +89,27 @@ the same way.
    permissions). Delete that file to re-authenticate.
 
 Override the locations with `GMAIL_CREDENTIALS_FILE` and
-`GMAIL_TOKEN_FILE`.
+`GMAIL_TOKEN_FILE`. Gmail and Calendar share the one token file: a token
+granted before the calendar commands existed does not carry the Calendar
+scope, so delete `credentials/token.json` and sign in again the first time
+you run a `calendar` command.
 
 ### Scopes
 
-The tool requests three scopes, and a stored token only carries the scopes
+The tool requests four scopes, and a stored token only carries the scopes
 granted when it was created — delete `credentials/token.json` if you change
 them:
 
 | Scope | Used for |
 |---|---|
 | `gmail.readonly` | Reading messages for scrape, archive, and digest |
-| `gmail.labels` | Creating the `Archive-Brands/...` labels |
+| `gmail.labels` | Creating the `Archive-Brands/...` labels, and listing labels |
 | `gmail.modify` | Removing `INBOX` when organising |
+| `calendar.readonly` | Calendar commands only |
 
 Read-only commands never modify anything. Only `organize` changes labels,
-and only after you have seen its `--dry-run` output.
+and only after you have seen its `--dry-run` output. The label and
+calendar commands only read.
 
 ## Usage
 
@@ -116,6 +132,16 @@ gmail-toolkit digest summarize --days 1 --limit 20
 
 # Rebuild reports from cached JSON, offline
 gmail-toolkit restore rebuild exports
+
+# Label inventory (read-only)
+gmail-toolkit labels inventory
+gmail-toolkit labels details
+
+# Calendar exports (read-only; delete credentials/token.json first if your
+# stored token predates the Calendar scope)
+gmail-toolkit calendar calendars
+gmail-toolkit calendar upcoming --max-results 10
+gmail-toolkit calendar events --all
 ```
 
 Run `gmail-toolkit <command> --help` for every option. Exports always land
@@ -159,6 +185,11 @@ defaults above are used, so the installed CLI works from any directory.
   Gmail `DRAFT` label; scope comes from list/bulk headers and the actual
   recipient count. Tracking detection counts 1×1 / hidden images and links
   through known redirectors.
+- **Labels and Calendar.** Label listing follows every page, detail fetches
+  are retried like Gmail calls and a single failed label is skipped rather
+  than aborting the inventory. Calendar event listing follows every page;
+  upcoming events are bounded below by the current time, and missing event
+  fields degrade to empty CSV cells instead of crashing the export.
 
 ## Development
 
@@ -170,10 +201,10 @@ mypy src
 pytest -q
 ```
 
-All 37 tests run offline against a fake Gmail service and synthetic
-fixtures; no test touches the live Gmail API or needs credentials. Live
-Gmail behaviour (OAuth flow, real pagination, label creation) is the
-remaining check on your own account after push.
+All 51 tests run offline against fake Gmail/Calendar services and synthetic
+fixtures; no test touches a live Google API or needs credentials. Live
+Gmail/Calendar behaviour (OAuth flow, real pagination, label creation) is
+the remaining check on your own account after push.
 
 ## Changelog
 

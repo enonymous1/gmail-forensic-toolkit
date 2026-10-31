@@ -1,5 +1,69 @@
 # Changelog
 
+## 2.2.0 — 2026-10-31
+
+P1 and remaining staff-review items. No command names, flags, or export
+locations changed; one deliberate behaviour change is marked below.
+
+### Added
+
+- Gmail batch fetching: scrape, digest, and archive now fetch messages
+  with one batch request per 100 messages instead of one HTTP call per
+  message, and label-detail fetching is batched the same way. Services
+  without batch support fall back to sequential calls.
+- `gmail_toolkit.settings.Settings`: one dataclass for page sizes, batch
+  chunk sizes, and retry budgets, accepted by the API wrappers. The CLI
+  uses the defaults; embedding callers can pass their own.
+- `gmail_toolkit.services` Protocols for the Gmail and Calendar service
+  shapes, replacing `service: Any` throughout, so mypy checks the API
+  boundary instead of passing it vacuously.
+- Testable core functions for every command group
+  (`discover_senders`, `summarize_activity`, `organize_sender`,
+  `export_inventory`, `export_details`, `export_calendars`,
+  `export_upcoming`, `export_events`, `process_batch`), following the
+  `archive_contact` pattern: Typer commands now only build the service
+  and print, and cores can be called directly with a fake service.
+- Export versioning: reports carry a `ToolkitVersion` frontmatter field
+  and cached JSON payloads carry a namespaced `toolkit_version` key, so
+  a future format change can tell old caches from new ones.
+- Global `--verbose` flag (before the subcommand:
+  `gmail-toolkit --verbose scrape ...`) enabling debug logging, including
+  retry warnings and HTML-conversion fallbacks.
+- A test asserting `__init__.py` and `pyproject.toml` agree on the
+  version, so the hand-duplicated version cannot drift silently again.
+
+### Changed
+
+- All export writes (reports, cached sources, CSVs, label JSON) are
+  atomic: temp file in the same directory plus rename, so a crash can no
+  longer leave a truncated file that `restore` chokes on.
+- Numeric CLI options are validated: negative `--max-results`,
+  `--days`, `--limit`, `--batch-size`, or `--skip` now fail with a usage
+  error instead of producing an empty export or an API traceback.
+- Retry backoff adds up to 25% jitter, so clients that hit the same
+  quota wall do not retry in lockstep.
+- Dependencies now carry major-version upper bounds, and CI runs on
+  Ubuntu and Windows across Python 3.10–3.13 (the Windows and 3.13 legs
+  are verified by CI itself on the first run after push, not locally).
+- Header flattening is now one shared helper (`headers_dict`): scrape
+  and digest previously re-implemented it, and digest kept only the last
+  duplicate header where parse joins duplicates. Behaviour change, in
+  the direction of consistency: digest now joins duplicate headers too.
+- `classify_message` no longer takes the `sender` argument it explicitly
+  ignored (internal API only; reports are unchanged).
+- Docstrings now record the deliberate decisions: Meeting-before-
+  Notification precedence in classification (changing it is a breaking
+  change), the tracking-pixel style heuristic's false-positive risk, and
+  the first-`Received`-offset rule for timezones.
+- Dead `_LABEL_COLUMNS` removed.
+
+### Fixed
+
+- `fetch_label_details` now skips transport failures (`OSError`) the
+  same way it skipped API errors, matching its skip-tolerant claim; a
+  per-request batch failure also gets a sequential retry before it is
+  skipped for good.
+
 ## 2.1.1 — 2026-10-31
 
 Staff-review fixes (P0) plus a rewritten README. No new commands, no

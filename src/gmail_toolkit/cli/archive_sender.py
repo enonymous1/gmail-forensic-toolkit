@@ -3,30 +3,32 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import typer
 
 from ..auth import get_gmail_service
 from ..branding import resolve_brand
-from ..gmail_api import get_message, list_message_ids
+from ..gmail_api import batch_get_messages, list_message_ids
 from ..paths import (
     ensure_directory,
     get_base_filename,
     next_available_path,
     sanitize_filename,
+    write_text_atomic,
 )
 from ..process_email import (
     generate_forensic_markdown,
     parse_gmail_payload,
     save_source_files,
 )
+from ..services import GmailService
+from .validators import positive_int_callback
 
 app = typer.Typer(help="Archive emails from a specific sender.")
 
 
 def archive_contact(
-    service: Any,
+    service: GmailService,
     email: str,
     limit: int = 50,
     brands_path: Path | None = None,
@@ -52,15 +54,13 @@ def archive_contact(
     sender_dir = ensure_directory(exports_dir / brand / sender_clean)
 
     archived = 0
-    for message_id in message_ids:
-        raw_msg = get_message(service, message_id, message_format="full")
+    # One batch call per chunk of messages, not one get per message.
+    for raw_msg in batch_get_messages(service, message_ids):
         email_data = parse_gmail_payload(raw_msg)
         base_name = get_base_filename(email_data["date"], email_data["subject"])
 
         md_path = next_available_path(sender_dir / f"{base_name}.md")
-        md_path.write_text(
-            generate_forensic_markdown(email_data, brand), encoding="utf-8"
-        )
+        write_text_atomic(md_path, generate_forensic_markdown(email_data, brand))
         # Source files share the stem of the Markdown file actually written,
         # so a collision-suffixed report still pairs with its sources.
         save_source_files(email_data, sender_dir, md_path.stem)
@@ -72,7 +72,12 @@ def archive_contact(
 @app.command()
 def contact(
     email: str = typer.Argument(..., help="Sender email address to archive."),
-    limit: int = typer.Option(50, "--limit", help="Maximum messages to archive."),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        callback=positive_int_callback,
+        help="Maximum messages to archive.",
+    ),
     brands_path: Path | None = typer.Option(
         None, "--brands", help="Brands JSON file (defaults to built-in brands)."
     ),

@@ -23,22 +23,24 @@ from functools import partial
 from typing import Any
 
 from .gmail_api import execute_with_retry, iter_pages
+from .services import CalendarService
+from .settings import DEFAULT_SETTINGS, Settings
 
-_DEFAULT_PAGE_SIZE = 250
 
-
-def _list_calendars(service: Any) -> Any:
+def _list_calendars(service: CalendarService) -> Any:
     return service.calendarList().list().execute()
 
 
-def list_calendars(service: Any) -> list[dict[str, Any]]:
+def list_calendars(
+    service: CalendarService, settings: Settings | None = None
+) -> list[dict[str, Any]]:
     """Return every calendar on the calendar list."""
-    response = execute_with_retry(partial(_list_calendars, service))
+    response = execute_with_retry(partial(_list_calendars, service), settings=settings)
     return list(response.get("items", []) or [])
 
 
 def _list_events_page(
-    service: Any,
+    service: CalendarService,
     calendar_id: str,
     page_token: str | None,
     request_size: int,
@@ -57,11 +59,12 @@ def _list_events_page(
 
 
 def list_events(
-    service: Any,
+    service: CalendarService,
     calendar_id: str,
     max_results: int | None = None,
     time_min: str | None = None,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    page_size: int | None = None,
+    settings: Settings | None = None,
 ) -> list[dict[str, Any]]:
     """Return events for *calendar_id*, following every page of results.
 
@@ -70,6 +73,11 @@ def list_events(
     """
     if max_results is not None and max_results <= 0:
         return []
+    effective_page_size = (
+        page_size
+        if page_size is not None
+        else (settings or DEFAULT_SETTINGS).calendar_page_size
+    )
     events: list[dict[str, Any]] = []
     for page in iter_pages(
         lambda size, token: _list_events_page(
@@ -77,16 +85,18 @@ def list_events(
         ),
         "items",
         max_results=max_results,
-        page_size=page_size,
+        page_size=effective_page_size,
+        settings=settings,
     ):
         events.extend(page)
     return events
 
 
 def list_upcoming_events(
-    service: Any,
+    service: CalendarService,
     calendar_id: str = "primary",
     max_results: int = 10,
+    settings: Settings | None = None,
 ) -> list[dict[str, Any]]:
     """Return the next *max_results* events from now on *calendar_id*.
 
@@ -95,7 +105,13 @@ def list_upcoming_events(
     instead of the future. ``timeMin`` is now the current UTC time.
     """
     time_min = datetime.now(timezone.utc).isoformat()
-    return list_events(service, calendar_id, max_results=max_results, time_min=time_min)
+    return list_events(
+        service,
+        calendar_id,
+        max_results=max_results,
+        time_min=time_min,
+        settings=settings,
+    )
 
 
 def _event_when(event: dict[str, Any], key: str) -> str:

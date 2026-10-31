@@ -8,23 +8,23 @@ from gmail_toolkit.forensics.scanners import detect_tracking
 
 
 def test_classifier_meeting_and_notification_keywords():
-    assert classify_message("Meeting invite tomorrow", "a@b.com", {})[0] == "Meeting"
-    assert classify_message("Security alert", "a@b.com", {})[0] == "Notification"
-    assert classify_message("Hello", "a@b.com", {}) == ("Email", "Direct (1:1)")
+    assert classify_message("Meeting invite tomorrow", {})[0] == "Meeting"
+    assert classify_message("Security alert", {})[0] == "Notification"
+    assert classify_message("Hello", {}) == ("Email", "Direct (1:1)")
 
 
 def test_classifier_draft_label_and_group_scope():
     headers = {"labelids": ["INBOX", "DRAFT"]}
-    assert classify_message("Hello", "a@b.com", headers)[0] == "Draft"
+    assert classify_message("Hello", headers)[0] == "Draft"
     headers = {
         "to": "one@example.com, two@example.com",
         "cc": "three@example.com",
     }
-    assert classify_message("Hello", "a@b.com", headers)[1] == "Group"
+    assert classify_message("Hello", headers)[1] == "Group"
     headers = {"list-id": "<list.example.com>", "to": "one@example.com"}
-    assert classify_message("Hello", "a@b.com", headers)[1] == "Broadcast"
+    assert classify_message("Hello", headers)[1] == "Broadcast"
     headers = {"precedence": "bulk"}
-    assert classify_message("Hello", "a@b.com", headers)[1] == "Broadcast"
+    assert classify_message("Hello", headers)[1] == "Broadcast"
 
 
 def test_sender_timezone_prefers_date_header():

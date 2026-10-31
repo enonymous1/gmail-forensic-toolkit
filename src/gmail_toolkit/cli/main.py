@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import typer
 
 from .. import __version__
@@ -34,8 +36,22 @@ def _callback(
         is_eager=True,
         help="Show the version and exit.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        is_eager=True,
+        help="Enable debug logging (retry warnings, conversion fallbacks).",
+    ),
 ) -> None:
     """Gmail Forensic Toolkit CLI."""
+    # Runs before every subcommand (pass it before the subcommand name:
+    # ``gmail-toolkit --verbose scrape ...``). Without --verbose only
+    # warnings and errors are logged; with it, debug records surface too.
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
 
 
 app.add_typer(scrape_senders.app, name="scrape")

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 
+from ..paths import write_text_atomic
 from ..process_email import generate_forensic_markdown, parse_gmail_payload
 
 app = typer.Typer(help="Rebuild metadata from local JSON.")
@@ -52,7 +53,7 @@ def rebuild(
             try:
                 md_content = generate_forensic_markdown(email_data, brand)
                 md_path = parent / f"{json_path.stem}.md"
-                md_path.write_text(md_content, encoding="utf-8")
+                write_text_atomic(md_path, md_content)
             except Exception as exc:
                 # Generation can fail on a payload that parses cleanly
                 # (for example an unserialisable frontmatter value); that

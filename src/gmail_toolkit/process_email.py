@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime
@@ -23,10 +24,13 @@ import yaml
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
+from . import __version__
 from .forensics.classifier import classify_message
 from .forensics.headers import get_sender_timezone
 from .forensics.scanners import detect_tracking
-from .paths import ensure_directory
+from .paths import ensure_directory, write_text_atomic
+
+logger = logging.getLogger(__name__)
 
 
 class EmailData(TypedDict):
@@ -57,6 +61,28 @@ def _decode_body(data: str) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
+def headers_dict(payload: Mapping[str, Any]) -> dict[str, str]:
+    """Flatten a Gmail payload's header list into a lowercase dict.
+
+    This is the one canonical header-flattening rule: names are lowercased
+    and duplicate headers (notably ``Received``) are joined with a space
+    instead of silently dropping all but the last. ``parse_gmail_payload``,
+    scrape, and digest all use it, so a header means the same thing in
+    every command.
+    """
+    headers: dict[str, str] = {}
+    for header in payload.get("headers", []) or []:
+        name = str(header.get("name", "")).lower()
+        value = str(header.get("value", ""))
+        if not name:
+            continue
+        if name in headers:
+            headers[name] = f"{headers[name]} {value}"
+        else:
+            headers[name] = value
+    return headers
+
+
 def parse_gmail_payload(message_json: Mapping[str, Any]) -> EmailData:
     """Parse a Gmail API message object into a structured forensic dict.
 
@@ -65,16 +91,7 @@ def parse_gmail_payload(message_json: Mapping[str, Any]) -> EmailData:
     MIME type wins instead of the last part overwriting earlier ones.
     """
     payload = message_json.get("payload", {}) or {}
-    headers: dict[str, Any] = {}
-    for header in payload.get("headers", []) or []:
-        name = str(header.get("name", "")).lower()
-        value = header.get("value", "")
-        if not name:
-            continue
-        if name in headers:
-            headers[name] = f"{headers[name]} {value}"
-        else:
-            headers[name] = value
+    headers: dict[str, Any] = headers_dict(payload)
     headers["labelids"] = message_json.get("labelIds", [])
 
     subject = str(headers.get("subject", "(No Subject)"))
@@ -122,20 +139,27 @@ def parse_gmail_payload(message_json: Mapping[str, Any]) -> EmailData:
 def save_source_files(
     email_data: EmailData, target_dir: str | Path, base_filename: str
 ) -> None:
-    """Cache the raw JSON, HTML, and plain-text sources for offline re-parsing."""
+    """Cache the raw JSON, HTML, and plain-text sources for offline re-parsing.
+
+    The cached JSON is the API payload plus a namespaced ``toolkit_version``
+    key recording which toolkit version wrote it, so a future format change
+    can tell old caches from new ones. The key is not a Gmail field and
+    ``parse_gmail_payload`` ignores it on restore.
+    """
     source_dir = ensure_directory(Path(target_dir) / "SourceFiles")
 
     json_path = source_dir / f"{base_filename}.json"
-    with json_path.open("w", encoding="utf-8") as handle:
-        json.dump(email_data["raw_json"], handle, indent=4)
+    cached = dict(email_data["raw_json"])
+    cached["toolkit_version"] = __version__
+    write_text_atomic(json_path, json.dumps(cached, indent=4))
 
     if email_data["body_html"]:
         html_path = source_dir / f"{base_filename}.html"
-        html_path.write_text(email_data["body_html"], encoding="utf-8")
+        write_text_atomic(html_path, email_data["body_html"])
 
     if email_data["body_plain"]:
         text_path = source_dir / f"{base_filename}.txt"
-        text_path.write_text(email_data["body_plain"], encoding="utf-8")
+        write_text_atomic(text_path, email_data["body_plain"])
 
 
 def convert_html_to_markdown(html_content: str) -> str:
@@ -150,6 +174,10 @@ def convert_html_to_markdown(html_content: str) -> str:
     try:
         converted = markdownify(html_content, heading_style="ATX")
     except Exception:
+        # The fallback to plain text is deliberate (a report must never
+        # contain raw HTML), but swallowing the error silently hid real
+        # bugs. Log it so --verbose surfaces the cause.
+        logger.warning("markdownify failed; falling back to plain text", exc_info=True)
         converted = ""
     if converted.strip():
         return converted
@@ -159,15 +187,14 @@ def convert_html_to_markdown(html_content: str) -> str:
 
 def generate_forensic_markdown(email_data: EmailData, brand: str) -> str:
     """Assemble YAML frontmatter, an ``[!INFO]`` block, and the body."""
-    msg_type, msg_scope = classify_message(
-        email_data["subject"], email_data["sender"], email_data["headers"]
-    )
+    msg_type, msg_scope = classify_message(email_data["subject"], email_data["headers"])
     pixels, links = detect_tracking(email_data["body_html"])
     timezone_name = get_sender_timezone(email_data["headers"])
 
     frontmatter = {
         "Brand": brand,
         "Sender": email_data["sender"],
+        "ToolkitVersion": __version__,
         "Date": (
             email_data["date"].strftime("%Y-%m-%d %H:%M:%S")
             if email_data["date"] is not None

@@ -5,6 +5,6 @@ frontmatter, classify them, organise them with Gmail labels, export the
 label inventory, and export Google Calendar calendars and events.
 """
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
 
 __all__ = ["__version__"]

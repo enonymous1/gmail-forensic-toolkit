@@ -26,16 +26,19 @@ def _recipient_count(headers: dict[str, object]) -> int:
     return len(addresses)
 
 
-def classify_message(subject: str, sender: str, headers: dict) -> tuple[str, str]:
+def classify_message(subject: str, headers: dict) -> tuple[str, str]:
     """Return ``(message_type, message_scope)`` for a message.
 
     Type is keyword-based on the subject, with Gmail's ``DRAFT`` label as a
-    fallback. Scope is ``Broadcast`` for list/bulk mail, ``Group`` when more
-    than one recipient is addressed, and ``Direct (1:1)`` otherwise. The
-    *sender* argument is accepted for call-site compatibility; classification
-    does not depend on it.
+    fallback. The check order is deliberate, not alphabetical: Meeting
+    keywords are tested before Notification keywords, so a subject matching
+    both ("security meeting invite") reports as a Meeting. Changing this
+    order changes historical report categories, so treat it as a breaking
+    change. Scope is ``Broadcast`` for list/bulk mail, ``Group`` when more
+    than one recipient is addressed, and ``Direct (1:1)`` otherwise, and
+    Broadcast likewise outranks Group: a mailing-list message addressed to
+    many people is still Broadcast, not Group.
     """
-    _ = sender
     normalised = _normalised_headers(headers)
 
     message_type = "Email"

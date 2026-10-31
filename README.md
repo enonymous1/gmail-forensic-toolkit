@@ -176,6 +176,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
+ToolkitVersion: 2.2.0
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
@@ -234,21 +235,31 @@ mypy src
 pytest -q
 ```
 
-All 56 tests run offline against fake Gmail/Calendar services and synthetic
+All 70 tests run offline against fake Gmail/Calendar services and synthetic
 fixtures in `tests/conftest.py`; no test touches a live Google API or needs
 credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
 creation) is the remaining check, on your own account, after any change
-that touches auth or the API wrappers.
+that touches auth or the API wrappers. CI runs the same gates on Ubuntu
+and Windows across Python 3.10–3.13.
+
+Run any command with `--verbose` before the subcommand
+(`gmail-toolkit --verbose scrape ...`) to see debug logging, including
+retry warnings and HTML-conversion fallbacks. Page sizes, batch sizes,
+and retry budgets live in one `Settings` dataclass
+(`src/gmail_toolkit/settings.py`) that embedding callers can pass to the
+API wrappers; the CLI uses its defaults.
 
 Project layout:
 
 ```text
 src/gmail_toolkit/
   auth.py            OAuth: token load/refresh/grant, Gmail + Calendar services
-  gmail_api.py       Paginated, retrying Gmail wrappers (messages, labels, modify)
+  gmail_api.py       Paginated, retrying, batching Gmail wrappers (messages, labels, modify)
   calendar_api.py    Paginated, retrying Calendar wrappers + CSV row shapes
+  services.py        Protocols for the Gmail/Calendar service shapes
+  settings.py        Page/batch/retry settings dataclass
   branding.py        Domain -> brand resolution
-  paths.py           Filename sanitising, collision-safe paths, directories
+  paths.py           Filename sanitising, collision-safe paths, atomic writes
   process_email.py   Payload parsing + forensic Markdown generation
   forensics/         Classifier, header/timezone parsing, tracking scanners
   cli/               One Typer module per command group, registered in main.py

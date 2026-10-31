@@ -44,6 +44,9 @@ def get_sender_timezone(header_dict: dict) -> str:
     received = headers.get("received", "")
     if isinstance(received, list):
         received = " ".join(str(item) for item in received)
+    # Received headers arrive newest-first in the payload, and the parser
+    # joins them in that order, so the first offset found is the most
+    # recent hop's offset — the one closest to the sender.
     match = _TZ_OFFSET.search(str(received))
     if match:
         return match.group(1)

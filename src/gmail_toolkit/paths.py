@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,24 @@ def ensure_directory(path: str | Path) -> Path:
     directory = Path(path)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def write_text_atomic(path: str | Path, text: str) -> None:
+    """Write *text* to *path* via a temp file in the same directory + rename.
+
+    A crash mid-write used to leave a truncated export that ``restore``
+    would then choke on. The temp file lives beside the destination so
+    the rename stays on one filesystem (and therefore atomic); on
+    Windows ``os.replace`` overwrites an existing destination, which is
+    safe here because callers pick a collision-free path first.
+    """
+    target = Path(path)
+    ensure_directory(target.parent)
+    tmp = target.with_name(f".{target.name}.tmp")
+    # newline="": write the text verbatim (no platform translation), so a
+    # CSV's CRLF rows are not doubled on Windows.
+    tmp.write_text(text, encoding="utf-8", newline="")
+    os.replace(tmp, target)
 
 
 def next_available_path(path: str | Path) -> Path:

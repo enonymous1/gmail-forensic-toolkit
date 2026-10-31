@@ -20,6 +20,10 @@ _REDIRECT_MARKERS = (
     "redirect.",
 )
 _PIXEL_SRC_MARKERS = ("pixel", "transparent", "beacon", "1x1")
+# _STYLE_HIDE is a heuristic, not proof of tracking: legitimate spacer
+# images and hidden layout elements match it too. Counts from this module
+# are therefore indicative ("this message looks tracked"), never a verdict
+# on the sender's intent.
 _STYLE_HIDE = re.compile(
     r"display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0"
     r"|width\s*:\s*0(?:px)?\s*(?:;|$)|height\s*:\s*0(?:px)?\s*(?:;|$)"

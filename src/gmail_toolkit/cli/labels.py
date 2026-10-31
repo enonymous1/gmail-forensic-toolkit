@@ -16,11 +16,10 @@ import typer
 
 from ..auth import get_gmail_service
 from ..gmail_api import fetch_label_details, list_labels
-from ..paths import ensure_directory, sanitize_filename
+from ..paths import ensure_directory, sanitize_filename, write_text_atomic
+from ..services import GmailService
 
 app = typer.Typer(help="Export the Gmail label inventory as JSON.")
-
-_LABEL_COLUMNS = ("Name", "ID", "Type", "Messages")
 
 
 def _print_table(labels: list[dict], details: dict[str, dict] | None = None) -> None:
@@ -37,6 +36,45 @@ def _print_table(labels: list[dict], details: dict[str, dict] | None = None) -> 
         )
 
 
+def export_inventory(service: GmailService, output: Path) -> int:
+    """List every label, write the list response to *output*, return the count."""
+    labels = list_labels(service)
+    _print_table(labels)
+    ensure_directory(output.parent)
+    write_text_atomic(output, json.dumps(labels, indent=2))
+    typer.echo(f"\n{len(labels)} label(s) saved to {output}")
+    return len(labels)
+
+
+def export_details(service: GmailService, output_dir: Path) -> tuple[int, int]:
+    """Fetch every label's detail and write one JSON file per label.
+
+    Also writes ``joined_label_details.json`` in the same directory: the
+    combined array, matching the join step the old project ran separately.
+    Returns ``(fetched, skipped)``; labels whose detail request fails are
+    skipped and counted.
+    """
+    labels = list_labels(service)
+    ensure_directory(output_dir)
+
+    fetched = fetch_label_details(service, labels)
+    by_id = {str(detail.get("id", "")): detail for detail in fetched}
+    for detail in fetched:
+        filename = f"{sanitize_filename(str(detail.get('id', 'label')))}.json"
+        write_text_atomic(output_dir / filename, json.dumps(detail, indent=2))
+    joined_path = output_dir / "joined_label_details.json"
+    write_text_atomic(joined_path, json.dumps(fetched, indent=2))
+
+    _print_table(labels, by_id)
+    skipped = len(labels) - len(fetched)
+    typer.echo(
+        f"\n{len(fetched)} label detail(s) saved to {output_dir}"
+        + (f" ({skipped} skipped)" if skipped else "")
+        + f"; joined file: {joined_path}"
+    )
+    return len(fetched), skipped
+
+
 @app.command()
 def inventory(
     output: Path = typer.Option(
@@ -46,12 +84,7 @@ def inventory(
     ),
 ) -> None:
     """List every label and write the list response to JSON."""
-    service = get_gmail_service()
-    labels = list_labels(service)
-    _print_table(labels)
-    ensure_directory(output.parent)
-    output.write_text(json.dumps(labels, indent=2), encoding="utf-8")
-    typer.echo(f"\n{len(labels)} label(s) saved to {output}")
+    export_inventory(get_gmail_service(), output)
 
 
 @app.command()
@@ -68,27 +101,7 @@ def details(
     combined array, matching the join step the old project ran separately.
     Labels whose detail request fails are skipped and counted.
     """
-    service = get_gmail_service()
-    labels = list_labels(service)
-    ensure_directory(output_dir)
-
-    fetched = fetch_label_details(service, labels)
-    by_id = {str(detail.get("id", "")): detail for detail in fetched}
-    for detail in fetched:
-        filename = f"{sanitize_filename(str(detail.get('id', 'label')))}.json"
-        (output_dir / filename).write_text(
-            json.dumps(detail, indent=2), encoding="utf-8"
-        )
-    joined_path = output_dir / "joined_label_details.json"
-    joined_path.write_text(json.dumps(fetched, indent=2), encoding="utf-8")
-
-    _print_table(labels, by_id)
-    skipped = len(labels) - len(fetched)
-    typer.echo(
-        f"\n{len(fetched)} label detail(s) saved to {output_dir}"
-        + (f" ({skipped} skipped)" if skipped else "")
-        + f"; joined file: {joined_path}"
-    )
+    export_details(get_gmail_service(), output_dir)
 
 
 if __name__ == "__main__":

@@ -185,6 +185,29 @@ class FakeCalendarService:
         return self.events_api
 
 
+class FakeBatch:
+    """Mimics googleapiclient's BatchHttpRequest for the test fakes."""
+
+    def __init__(self) -> None:
+        self._items: list[tuple[Any, Any, str | None]] = []
+
+    def add(
+        self, request: Any, callback: Any = None, request_id: str | None = None
+    ) -> None:
+        self._items.append((request, callback, request_id))
+
+    def execute(self) -> None:
+        for request, callback, request_id in self._items:
+            try:
+                response: Any = request.execute()
+                exception: Exception | None = None
+            except Exception as exc:  # noqa: BLE001 - delivered to the callback
+                response = None
+                exception = exc
+            if callback is not None:
+                callback(request_id, response, exception)
+
+
 class FakeService:
     def __init__(
         self,
@@ -198,6 +221,9 @@ class FakeService:
 
     def users(self) -> FakeUsers:
         return FakeUsers(self.messages_api, self.labels_api)
+
+    def new_batch_http_request(self, callback: Any = None) -> FakeBatch:
+        return FakeBatch()
 
 
 @pytest.fixture

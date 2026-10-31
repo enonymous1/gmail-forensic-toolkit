@@ -18,13 +18,14 @@ from __future__ import annotations
 import contextlib
 import os
 from pathlib import Path
-from typing import Any
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from .services import CalendarService, GmailService
 
 # If modifying these SCOPES, delete the token file: a stored token only
 # carries the scopes granted when it was created.
@@ -110,7 +111,7 @@ def get_gmail_service(
     credentials_path: str | Path | None = None,
     token_path: str | Path | None = None,
     scopes: list[str] | None = None,
-) -> Any:
+) -> GmailService:
     """Authenticate the user and return a Gmail API service instance.
 
     Handles token refreshing and the initial OAuth2 flow, and saves the
@@ -126,7 +127,7 @@ def get_calendar_service(
     credentials_path: str | Path | None = None,
     token_path: str | Path | None = None,
     scopes: list[str] | None = None,
-) -> Any:
+) -> CalendarService:
     """Authenticate the user and return a Calendar API service instance.
 
     Shares the Gmail token file (see the module docstring): a token granted

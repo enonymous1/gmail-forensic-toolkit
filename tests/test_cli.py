@@ -24,7 +24,7 @@ def test_cli_help_and_version():
     assert runner.invoke(app, ["scrape", "--help"]).exit_code == 0
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "gmail-toolkit 2.1.0" in result.output
+    assert "gmail-toolkit 2.1.1" in result.output
 
 
 def test_scrape_writes_sorted_csv(monkeypatch, tmp_path, fake_service):
@@ -103,6 +103,28 @@ def test_restore_rebuilds_from_saved_json(tmp_path):
     assert "Category**: Meeting" in report.read_text(encoding="utf-8")
 
 
+def test_restore_skips_payload_that_breaks_generation(tmp_path, monkeypatch):
+    # A payload that parses but breaks Markdown generation must skip one
+    # report, not abort the whole rebuild.
+    import gmail_toolkit.cli.restore_metadata as restore_module
+
+    payload = make_payload()
+    target = tmp_path / "exports" / "Example" / "sender_at_example_com" / "SourceFiles"
+    target.mkdir(parents=True)
+    (target / "2026-07-21_1000_Subject.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    def _failing_generate(*_args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(restore_module, "generate_forensic_markdown", _failing_generate)
+    result = runner.invoke(app, ["restore", "rebuild", str(tmp_path / "exports")])
+    assert result.exit_code == 0, result.output
+    assert "Skipping" in result.output
+    assert not (target.parent / "2026-07-21_1000_Subject.md").exists()
+
+
 def test_restore_missing_path_exits_nonzero():
     result = runner.invoke(app, ["restore", "rebuild", "/definitely/not/here"])
     assert result.exit_code == 1
@@ -121,6 +143,25 @@ def test_batch_process_reads_csv_and_archives(monkeypatch, tmp_path, fake_servic
         result = runner.invoke(app, ["batch", "process", "--batch-size", "1"])
     assert result.exit_code == 0, result.output
     assert list((tmp_path / "exports" / "Individual").rglob("*.md"))
+
+
+def test_batch_process_accepts_brands_file(monkeypatch, tmp_path, fake_service):
+    _patch_service(monkeypatch, batch_archive, fake_service)
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    brands = tmp_path / "brands.json"
+    brands.write_text('{"example.com": "CustomBrand"}', encoding="utf-8")
+    with (exports / "Contact_Directory.csv").open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Sender", "Count"])
+        writer.writerow(["Fictional Sender <sender@example.com>", "1"])
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        result = runner.invoke(
+            app, ["batch", "process", "--batch-size", "1", "--brands", str(brands)]
+        )
+    assert result.exit_code == 0, result.output
+    assert list((tmp_path / "exports" / "CustomBrand").rglob("*.md"))
 
 
 def test_batch_process_missing_csv_exits_nonzero(monkeypatch, tmp_path):

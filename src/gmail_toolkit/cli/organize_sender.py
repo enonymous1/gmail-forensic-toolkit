@@ -34,6 +34,10 @@ def labels(
     first to see how many messages would move.
     """
     service = get_gmail_service()
+    if brands_path is not None and not brands_path.exists():
+        typer.echo(
+            f"Warning: brands file not found: {brands_path}; using built-in defaults."
+        )
     brand = resolve_brand(email, brands_path)
     label_path = f"Archive-Brands/{brand}/{email}"
     typer.echo(f"Organising {email} into label: {label_path}")

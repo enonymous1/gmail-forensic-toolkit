@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.1.1 — 2026-10-31
+
+Staff-review fixes (P0) plus a rewritten README. No new commands, no
+change to the export formats except the date handling below.
+
+### Fixed
+
+- `calendar upcoming` no longer writes every calendar's events to the
+  `primary` CSV: without `--output` the path is now derived from the
+  requested calendar id (`exports/calendar/events/<calendar-id>/events.csv`).
+- `restore rebuild` no longer aborts the whole rebuild when a payload
+  parses but breaks Markdown generation; that report is skipped and
+  reported, as the command already promised for unparseable payloads.
+- Messages with no parseable Date header are no longer stamped with the
+  current time. Their reports say `Date: Unknown` and their export
+  filenames use a `nodate` stem, so a filename never implies a date the
+  payload did not carry.
+- Pagination can no longer loop forever on a repeated page token, and a
+  page larger than the requested budget no longer overshoots
+  `--max-results`. Gmail message/label listing and Calendar event listing
+  now share one pagination helper with both guards.
+- A malformed brands JSON file now raises a `ValueError` naming the file
+  and the parse error, instead of a bare `JSONDecodeError` traceback. A
+  mistyped `--brands` path prints a warning and falls back to the built-in
+  brands, instead of falling back silently.
+
+### Added
+
+- `batch process --brands`: batch runs can now use a custom brands file,
+  like `archive` and `organize` already could.
+- 5 new offline tests covering the fixes above — 56 tests total.
+
+### Changed
+
+- README rewritten: Description, Prerequisites, Installation, Local
+  Development, and Deployment sections, corrected export-path and
+  `--brands` documentation (the old README claimed `config/brands.json`
+  was read by default; it is an example copy of the built-in defaults),
+  a Mermaid architecture diagram, and commented placeholders for visuals
+  to be captured from a throwaway account or synthetic fixtures — never
+  from a real mailbox.
+
 ## 2.1.0 — 2026-10-28
 
 Fold-in of the `ss-gmail` project's two capabilities the toolkit lacked:

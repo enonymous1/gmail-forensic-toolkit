@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 from gmail_toolkit.process_email import (
     convert_html_to_markdown,
@@ -54,7 +53,21 @@ def test_parse_bad_base64_and_missing_date_do_not_crash():
     ]
     data = parse_gmail_payload(payload)
     assert data["body_html"] == ""
-    assert isinstance(data["date"], datetime)
+    # No Date header must stay unknown, never be replaced with "now".
+    assert data["date"] is None
+
+
+def test_missing_date_reports_unknown_and_uses_nodate_stem():
+    payload = make_payload()
+    payload["payload"]["headers"] = [
+        header for header in payload["payload"]["headers"] if header["name"] != "Date"
+    ]
+    data = parse_gmail_payload(payload)
+    output = generate_forensic_markdown(data, "Example")
+    assert "Date: Unknown" in output
+    from gmail_toolkit.paths import get_base_filename
+
+    assert get_base_filename(data["date"], "Hello: World") == "nodate_Hello World"
 
 
 def test_forensic_markdown_uses_the_real_engine(payload):

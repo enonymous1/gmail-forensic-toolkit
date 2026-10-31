@@ -76,10 +76,11 @@ def upcoming(
     max_results: int = typer.Option(
         10, "--max-results", help="Maximum upcoming events to export."
     ),
-    output: Path = typer.Option(
-        Path("exports") / "calendar" / "events" / "primary" / "events.csv",
+    output: Path | None = typer.Option(
+        None,
         "--output",
-        help="Where to write the upcoming-events CSV.",
+        help="Where to write the upcoming-events CSV. Defaults to "
+        "exports/calendar/events/<calendar-id>/events.csv.",
     ),
 ) -> None:
     """Export the next events on one calendar, from now onwards."""
@@ -88,10 +89,18 @@ def upcoming(
     rows = [
         {key: event_row(event)[key] for key in _UPCOMING_FIELDS} for event in events
     ]
-    _write_csv(output, _UPCOMING_FIELDS, rows)
+    resolved_output = (
+        output
+        or Path("exports")
+        / "calendar"
+        / "events"
+        / sanitize_filename(calendar_id)
+        / "events.csv"
+    )
+    _write_csv(resolved_output, _UPCOMING_FIELDS, rows)
     for row in rows:
         typer.echo(f"{row['Event Name']} at {row['Start Time']}")
-    typer.echo(f"\n{len(rows)} upcoming event(s) saved to {output}")
+    typer.echo(f"\n{len(rows)} upcoming event(s) saved to {resolved_output}")
 
 
 @app.command()

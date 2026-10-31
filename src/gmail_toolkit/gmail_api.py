@@ -59,6 +59,41 @@ def _list_messages(
     )
 
 
+def iter_pages(
+    fetch_page: Callable[[int, str | None], Any],
+    items_key: str,
+    max_results: int | None = None,
+    page_size: int = _DEFAULT_PAGE_SIZE,
+) -> Iterable[list[Any]]:
+    """Yield one page of items at a time, following ``nextPageToken``.
+
+    A page token that repeats means the server is not advancing, so it
+    ends the iteration instead of looping forever. A page larger than the
+    remaining budget is truncated, so callers never get more than
+    *max_results* items even if the server ignores the requested size.
+    """
+    seen_tokens: set[str | None] = set()
+    page_token: str | None = None
+    yielded = 0
+    while True:
+        if page_token in seen_tokens:
+            break
+        seen_tokens.add(page_token)
+        remaining = None if max_results is None else max_results - yielded
+        if remaining is not None and remaining <= 0:
+            break
+        request_size = page_size if remaining is None else min(page_size, remaining)
+        response = execute_with_retry(partial(fetch_page, request_size, page_token))
+        items = response.get(items_key, []) or []
+        if remaining is not None:
+            items = items[:remaining]
+        yield items
+        yielded += len(items)
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+
 def list_message_ids(
     service: Any,
     query: str | None = None,
@@ -69,24 +104,16 @@ def list_message_ids(
     if max_results is not None and max_results <= 0:
         return []
     message_ids: list[str] = []
-    page_token: str | None = None
-    while True:
-        remaining = None
-        if max_results is not None:
-            remaining = max_results - len(message_ids)
-            if remaining <= 0:
-                break
-        request_size = page_size if remaining is None else min(page_size, remaining)
-        response = execute_with_retry(
-            partial(_list_messages, service, query, request_size, page_token)
-        )
-        for message in response.get("messages", []) or []:
+    for page in iter_pages(
+        partial(_list_messages, service, query),
+        "messages",
+        max_results=max_results,
+        page_size=page_size,
+    ):
+        for message in page:
             message_id = message.get("id")
             if message_id:
                 message_ids.append(message_id)
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
     return message_ids
 
 
@@ -128,7 +155,9 @@ def get_message_metadata(
     return execute_with_retry(partial(_get_metadata, service, message_id, headers))
 
 
-def _get_label_page(service: Any, page_token: str | None) -> Any:
+def _get_label_page(service: Any, _request_size: int, page_token: str | None) -> Any:
+    # The labels list takes no page size; the parameter only exists so this
+    # fits the shared pagination helper's fetch signature.
     return service.users().labels().list(userId="me", pageToken=page_token).execute()
 
 
@@ -139,13 +168,8 @@ def list_labels(service: Any) -> list[dict[str, Any]]:
     :func:`get_label` for the full detail (counts, visibility, colour).
     """
     labels: list[dict[str, Any]] = []
-    page_token: str | None = None
-    while True:
-        response = execute_with_retry(partial(_get_label_page, service, page_token))
-        labels.extend(response.get("labels", []) or [])
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
+    for page in iter_pages(partial(_get_label_page, service), "labels"):
+        labels.extend(page)
     return labels
 
 
@@ -180,25 +204,15 @@ def fetch_label_details(
     return details
 
 
-def _list_labels(service: Any, page_token: str | None) -> Any:
-    return service.users().labels().list(userId="me", pageToken=page_token).execute()
-
-
 def _create_label(service: Any, body: dict[str, Any]) -> Any:
     return service.users().labels().create(userId="me", body=body).execute()
 
 
 def get_or_create_label(service: Any, label_name: str) -> str:
     """Return the ID of *label_name*, creating the label if it is missing."""
-    page_token: str | None = None
-    while True:
-        response = execute_with_retry(partial(_list_labels, service, page_token))
-        for label in response.get("labels", []) or []:
-            if str(label.get("name", "")).lower() == label_name.lower():
-                return str(label["id"])
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
+    for label in list_labels(service):
+        if str(label.get("name", "")).lower() == label_name.lower():
+            return str(label["id"])
 
     body = {
         "name": label_name,

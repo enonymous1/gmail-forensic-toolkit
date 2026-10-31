@@ -1,92 +1,93 @@
 # Gmail Forensic Toolkit
 
 [![CI](https://github.com/enonymous1/gmail-forensic-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/enonymous1/gmail-forensic-toolkit/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License: MIT-yellow.svg)](LICENSE)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
 
-Archive a Gmail mailbox locally as forensic Markdown, classify what you
-archived, and organise it with Gmail labels — from one CLI, with nothing
-uploaded anywhere. The same CLI also exports the Gmail label inventory
-as JSON and Google Calendar calendars and events as CSV. Every report is
-generated on your machine from the Gmail API payload, and the raw JSON,
-HTML, and plain-text sources are cached alongside it so reports can be
-rebuilt offline later.
+## Description
 
-## What it does
+Gmail Forensic Toolkit is a command-line tool that archives a Gmail mailbox
+locally as forensic Markdown reports, classifies what it archived, and
+organises it with Gmail labels — with nothing uploaded anywhere. It also
+exports the Gmail label inventory as JSON and Google Calendar calendars and
+events as CSV, all from the same CLI.
+
+What it does, in one line each:
 
 - **Scrape** a mailbox for unique senders and message counts, written to
   `exports/Contact_Directory.csv`.
 - **Archive** every message from a sender as a Markdown report with YAML
   frontmatter: brand, sender, date, timezone, subject, message ID, message
   type (Email / Meeting / Notification / Draft), and scope (Direct / Group /
-  Broadcast), plus tracking-pixel and redirect-link counts.
+  Broadcast), plus tracking-pixel and redirect-link counts. The raw JSON,
+  HTML, and plain-text sources are cached alongside each report, so reports
+  can be rebuilt offline later.
 - **Organise** a sender's inbox messages under a hierarchical Gmail label,
   `Archive-Brands/<Brand>/<Sender>`, using `batchModify` — with `--dry-run`
   to see what would move first.
-- **Batch-archive** the top senders from the contact directory, a few at a
-  time, with resume-by-`--skip`.
-- **Digest** recent mailbox activity in a one-line-per-message table.
+- **Batch-archive** senders from the contact directory, a few at a time,
+  skipping a sender offset with `--skip`.
+- **Digest** the last 24 hours (or `--days N`) of mailbox activity in a
+  one-line-per-message table.
 - **Restore** forensic Markdown from cached JSON payloads, without touching
   the Gmail API at all.
-- **Labels** — export the whole label inventory: `labels inventory` writes
-  the list response to `exports/labels/labels.json`, and `labels details`
+- **Labels** — export the whole label inventory. `labels inventory` writes
+  the list response to `exports/labels/labels.json`; `labels details`
   writes one JSON file per label plus a joined file, with per-label counts.
   Read-only.
-- **Calendar** — export Google Calendar data as CSV: `calendar calendars`
+- **Calendar** — export Google Calendar data as CSV. `calendar calendars`
   lists every calendar, `calendar upcoming` exports the next events on one
   calendar, and `calendar events --all` exports every event of every
   calendar. Read-only (`calendar.readonly`).
 
-Example report header, generated from a synthetic fixture message (not a
-real mailbox):
+<!-- VISUAL 1 — demo GIF. Capture a real terminal session (see the review's
+Visual Asset Strategy) and save it as docs/assets/demo.gif, then replace
+this comment with: ![Demo: labels inventory and calendar upcoming](docs/assets/demo.gif)
+Do not ship a faked or stock GIF here. -->
 
-```markdown
----
-Brand: Example
-Sender: Fictional Sender <sender@example.com>
-Date: '2026-07-21 10:00:00'
-Timezone: '-0400'
-Subject: 'Security alert: meeting invite'
-MessageID: msg-1
-Type: Meeting
-Scope: Direct (1:1)
----
+## Prerequisites
 
-> [!INFO] **Forensic Classification**
-> - **Brand**: Example
-> - **Category**: Meeting
-> - **Focus**: Direct (1:1)
-> - **Timezone**: -0400
-> - **Tracking**: Pixels: 1, Links: 1
----
-```
+- Python 3.10 or newer, plus `pip` and `git`.
+- A Google account with a mailbox and calendars you are allowed to export.
+- A Google Cloud project with the **Gmail API** enabled. For the calendar
+  commands, enable the **Google Calendar API** as well.
+- An OAuth2 credential of type **Desktop application** for that project
+  (see Installation). If the project's OAuth consent screen is still in
+  testing mode, add your own account as a test user; Google shows an
+  unverified-app warning for other accounts until the app is verified.
+- No Google Workspace admin access is needed. The tool only ever touches
+  the signed-in user's own mailbox and calendars.
 
 ## Installation
-
-Requires Python 3.10 or newer.
 
 ```bash
 git clone https://github.com/enonymous1/gmail-forensic-toolkit.git
 cd gmail-forensic-toolkit
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e .
 ```
 
 This installs the `gmail-toolkit` command. `python -m gmail_toolkit` works
-the same way.
+the same way. Check the install with:
 
-## Gmail setup (one time)
+```bash
+gmail-toolkit --help
+gmail-toolkit --version
+```
+
+### Gmail setup (one time)
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a
-   project and enable the Gmail API. For the calendar commands, enable
-   the Google Calendar API too.
+   project and enable the Gmail API (and the Google Calendar API if you
+   want the calendar commands).
 2. Create an OAuth2 credential of type **Desktop application** and download
    it as JSON.
 3. Place it at `credentials/credentials.json` in the directory you run the
    CLI from. That directory is git-ignored; never commit it.
 4. Run any command. A browser window opens for the first sign-in, and the
    token is saved to `credentials/token.json` (written with `0600`
-   permissions). Delete that file to re-authenticate.
+   permissions on POSIX systems). Delete that file to re-authenticate.
 
 Override the locations with `GMAIL_CREDENTIALS_FILE` and
 `GMAIL_TOKEN_FILE`. Gmail and Calendar share the one token file: a token
@@ -113,6 +114,9 @@ calendar commands only read.
 
 ## Usage
 
+Commands are grouped: `gmail-toolkit <group> <command>`. Run
+`gmail-toolkit <group> --help` for every option.
+
 ```bash
 # Discover senders (writes exports/Contact_Directory.csv)
 gmail-toolkit scrape discovery --max-results 500
@@ -124,10 +128,10 @@ gmail-toolkit archive contact sender@example.com --limit 100
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
 
-# Batch-archive the top 10 senders, skipping the first 0
+# Batch-archive the top 10 senders from the contact directory
 gmail-toolkit batch process --batch-size 10 --skip 0 --limit 100
 
-# Yesterday's activity
+# Last 24 hours of activity (use --days N for a longer window)
 gmail-toolkit digest summarize --days 1 --limit 20
 
 # Rebuild reports from cached JSON, offline
@@ -144,15 +148,61 @@ gmail-toolkit calendar upcoming --max-results 10
 gmail-toolkit calendar events --all
 ```
 
-Run `gmail-toolkit <command> --help` for every option. Exports always land
-under `./exports` in the working directory (override with `--exports-dir`
-on the archive/batch commands); two messages with the same timestamp and
-subject get a numeric suffix instead of overwriting each other.
+### Where exports land
+
+Exports always land under `./exports` in the working directory, but the
+override flag differs by command:
+
+| Command | Default output | Override |
+|---|---|---|
+| `scrape discovery` | `exports/Contact_Directory.csv` | `--output` |
+| `archive contact`, `batch process` | `exports/<Brand>/<Sender>/` | `--exports-dir` |
+| `labels inventory` | `exports/labels/labels.json` | `--output` |
+| `labels details` | `exports/labels/details/` | `--output-dir` |
+| `calendar calendars` | `exports/calendar/calendars.csv` | `--output` |
+| `calendar upcoming` | `exports/calendar/events/<calendar-id>/events.csv` | `--output` |
+| `calendar events` | `exports/calendar/events/<calendar-id>/events.csv` | `--output-dir` |
+| `digest summarize` | Prints to the terminal only | — |
+
+Two messages with the same timestamp and subject get a numeric suffix
+instead of overwriting each other.
+
+### Example report
+
+Example report header, generated from a synthetic fixture message (not a
+real mailbox):
+
+```markdown
+---
+Brand: Example
+Sender: Fictional Sender <sender@example.com>
+Date: '2026-07-21 10:00:00'
+Timezone: '-0400'
+Subject: 'Security alert: meeting invite'
+MessageID: msg-1
+Type: Meeting
+Scope: Direct (1:1)
+---
+
+> [!INFO] **Forensic Classification**
+> - **Brand**: Example
+> - **Category**: Meeting
+> - **Focus**: Direct (1:1)
+> - **Timezone**: -0400
+> - **Tracking**: Pixels: 1, Links: 1
+---
+```
+
+<!-- VISUAL 2 — rendered report screenshot. Render the fixture report above
+on GitHub (or in a Markdown preview) and save a cropped screenshot as
+docs/assets/report-example.png, then replace this comment with:
+![Example forensic report, rendered](docs/assets/report-example.png)
+Capture from the synthetic fixture only — never a real mailbox. -->
 
 ## Configuration
 
-Edit `config/brands.json` to map sender domains to brand names used for the
-export folders and label hierarchy:
+Brand names for export folders and the label hierarchy come from a JSON
+file mapping sender domains to brands:
 
 ```json
 {
@@ -165,15 +215,93 @@ export folders and label hierarchy:
 ```
 
 Subdomains match their parent domain (`mail.google.com` → Google), and
-unmapped senders fall back to `Individual`. Pass `--brands <file>` to use a
-different file; when no file is given or it is missing, the built-in
-defaults above are used, so the installed CLI works from any directory.
+unmapped senders fall back to `Individual`. Pass `--brands <file>` to
+`archive`, `organize`, or `batch` to use a different file. When no file is
+given, the built-in defaults above are used — the `config/brands.json`
+file in this repository is an example copy of those defaults, not a file
+the installed CLI reads automatically. A `--brands` path that does not
+exist prints a warning and falls back to the built-in defaults.
+
+## Local Development
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+ruff check src tests
+ruff format --check src tests
+mypy src
+pytest -q
+```
+
+All 56 tests run offline against fake Gmail/Calendar services and synthetic
+fixtures in `tests/conftest.py`; no test touches a live Google API or needs
+credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
+creation) is the remaining check, on your own account, after any change
+that touches auth or the API wrappers.
+
+Project layout:
+
+```text
+src/gmail_toolkit/
+  auth.py            OAuth: token load/refresh/grant, Gmail + Calendar services
+  gmail_api.py       Paginated, retrying Gmail wrappers (messages, labels, modify)
+  calendar_api.py    Paginated, retrying Calendar wrappers + CSV row shapes
+  branding.py        Domain -> brand resolution
+  paths.py           Filename sanitising, collision-safe paths, directories
+  process_email.py   Payload parsing + forensic Markdown generation
+  forensics/         Classifier, header/timezone parsing, tracking scanners
+  cli/               One Typer module per command group, registered in main.py
+tests/               Fake services + fixtures, one file per area under test
+config/brands.json   Example brand mapping (see Configuration)
+```
+
+To add a command: add a Typer module under `src/gmail_toolkit/cli/`,
+register it in `src/gmail_toolkit/cli/main.py` with `app.add_typer(...)`,
+put the API calls in `gmail_api.py` or `calendar_api.py` (not in the CLI
+module), and add offline tests against the fake services before opening a
+pull request. Keep line length at 88 characters (ruff) and type annotations
+on new public functions (mypy).
+
+## Deployment
+
+There is no server to deploy: this is a local CLI, and the deployed unit is
+an install on a machine, not a hosted service. The project is not published
+to PyPI, so installation is always from a checkout (see Installation).
+
+Release checklist for a maintainer:
+
+1. Bump the version in both `src/gmail_toolkit/__init__.py` and
+   `pyproject.toml` (they are duplicated by hand — keep them in sync).
+2. Add a `CHANGELOG.md` entry describing what changed and what was
+   deliberately left out.
+3. Run the full gate: `ruff check src tests`, `ruff format --check
+   src tests`, `mypy src`, `pytest -q`.
+4. Verify from a fresh checkout in a fresh virtualenv, including
+   `gmail-toolkit --version` and `gmail-toolkit --help`.
+5. Tag the release in git only after the release commit is pushed, so the
+   tag points at code that actually passed CI.
+6. Never commit `credentials/` or `exports/` — both are git-ignored because
+   they contain real mailbox content. Ship screenshots and diagrams made
+   from synthetic fixtures only.
 
 ## How it works
 
+```mermaid
+flowchart LR
+    CLI[gmail-toolkit CLI\n(Typer, one module per group)] --> Auth[auth.py\nOAuth token + services]
+    Auth --> Gmail[gmail_api.py\npaginated + retrying]
+    Auth --> Cal[calendar_api.py\npaginated + retrying]
+    Gmail --> GAPI[Gmail API v1]
+    Cal --> CAPI[Calendar API v3]
+    Gmail --> Exports[exports/\nMarkdown + JSON + CSV]
+    Cal --> Exports
+    Exports --> Restore[restore rebuild\n(offline, from JSON)]
+```
+
 - **Pagination and retries.** List calls follow every `nextPageToken`, so a
   sender with more than one page of messages is fully archived. Transient
-  Gmail errors (429 / 5xx) are retried with exponential backoff.
+  Gmail/Calendar errors (429 / 5xx) are retried with exponential backoff.
 - **Forensic parsing.** MIME parts are walked breadth-first, the first text
   body of each type wins, duplicate headers (notably `Received`) are joined
   instead of dropped, and malformed base64 or missing dates degrade
@@ -191,20 +319,37 @@ defaults above are used, so the installed CLI works from any directory.
   upcoming events are bounded below by the current time, and missing event
   fields degrade to empty CSV cells instead of crashing the export.
 
-## Development
+<!-- VISUAL 3 — labels terminal screenshot. Run `labels inventory` against
+a throwaway account (or the fixture-based test output), crop to the table
+plus the "saved to" line, save as docs/assets/labels-inventory.png, and
+replace this comment with:
+![Labels inventory table output](docs/assets/labels-inventory.png) -->
 
-```bash
-pip install -e ".[dev]"
-ruff check src tests
-ruff format --check src tests
-mypy src
-pytest -q
-```
+<!-- VISUAL 4 — calendar terminal screenshot. Run `calendar upcoming`
+against a throwaway account with fictional events, crop to the event list,
+save as docs/assets/calendar-upcoming.png, and replace this comment with:
+![Calendar upcoming events output](docs/assets/calendar-upcoming.png) -->
 
-All 51 tests run offline against fake Gmail/Calendar services and synthetic
-fixtures; no test touches a live Google API or needs credentials. Live
-Gmail/Calendar behaviour (OAuth flow, real pagination, label creation) is
-the remaining check on your own account after push.
+## Troubleshooting
+
+- **"Missing client secrets file"** — `credentials/credentials.json` is not
+  where the CLI is running. Check the working directory, or set
+  `GMAIL_CREDENTIALS_FILE` to the file's full path.
+- **Calendar commands fail with 403 / accessNotConfigured** — the Google
+  Calendar API is not enabled for the Cloud project. Enable it, then retry;
+  no new sign-in is needed for this error.
+- **Calendar commands fail with an auth/scope error after Gmail worked** —
+  the stored token predates the Calendar scope. Delete
+  `credentials/token.json` and sign in again.
+- **A brands file change has no effect** — unless you passed `--brands
+  <file>`, the built-in defaults are used (see Configuration). A
+  `--brands` path that does not exist prints a warning and falls back
+  to the built-ins; check the path for a typo.
+- **Reports for a sender look truncated or misclassified** — check the
+  cached `SourceFiles/*.json` for that message first: classification and
+  tracking detection only ever see the payload, never the live mailbox.
+  Rebuild offline with `restore rebuild` after a fix, instead of
+  re-archiving.
 
 ## Changelog
 

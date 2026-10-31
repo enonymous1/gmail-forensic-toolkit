@@ -28,8 +28,11 @@ def load_brands(brands_config_path: str | Path | None) -> dict[str, str]:
     path = Path(brands_config_path)
     if not path.exists():
         return dict(DEFAULT_BRANDS)
-    with path.open(encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Brands file is not valid JSON: {path}: {exc}") from exc
     if not isinstance(data, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in data.items()
     ):

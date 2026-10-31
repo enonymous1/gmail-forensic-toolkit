@@ -42,6 +42,10 @@ def test_load_brands_missing_file_uses_defaults_and_invalid_raises(tmp_path):
     bad.write_text('["not", "an", "object"]', encoding="utf-8")
     with pytest.raises(ValueError):
         load_brands(bad)
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        load_brands(malformed)
 
 
 def test_sanitize_filename_and_base_filename():

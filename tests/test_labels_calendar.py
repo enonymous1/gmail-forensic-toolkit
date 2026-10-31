@@ -206,6 +206,35 @@ def test_calendar_upcoming_writes_events_csv(
     ]
 
 
+def test_calendar_upcoming_derives_output_from_calendar_id(
+    monkeypatch, tmp_path, fake_calendar_service
+):
+    # Regression: the output path used to hardcode "primary" no matter
+    # which calendar was requested.
+    monkeypatch.setattr(
+        calendar_module, "get_calendar_service", lambda: fake_calendar_service
+    )
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "calendar",
+                "upcoming",
+                "--calendar-id",
+                "team@example.com",
+                "--max-results",
+                "1",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    team_csv = (
+        tmp_path / "exports" / "calendar" / "events" / "team@example.com" / "events.csv"
+    )
+    assert team_csv.exists()
+    assert not (tmp_path / "exports" / "calendar" / "events" / "primary").exists()
+
+
 def test_calendar_events_all_writes_one_csv_per_calendar(
     monkeypatch, tmp_path, fake_calendar_service
 ):

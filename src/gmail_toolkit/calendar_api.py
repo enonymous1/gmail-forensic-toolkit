@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
-from .gmail_api import execute_with_retry
+from .gmail_api import execute_with_retry, iter_pages
 
 _DEFAULT_PAGE_SIZE = 250
 
@@ -71,28 +71,15 @@ def list_events(
     if max_results is not None and max_results <= 0:
         return []
     events: list[dict[str, Any]] = []
-    page_token: str | None = None
-    while True:
-        remaining = None
-        if max_results is not None:
-            remaining = max_results - len(events)
-            if remaining <= 0:
-                break
-        request_size = page_size if remaining is None else min(page_size, remaining)
-        response = execute_with_retry(
-            partial(
-                _list_events_page,
-                service,
-                calendar_id,
-                page_token,
-                request_size,
-                time_min,
-            )
-        )
-        events.extend(response.get("items", []) or [])
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
+    for page in iter_pages(
+        lambda size, token: _list_events_page(
+            service, calendar_id, token, size, time_min
+        ),
+        "items",
+        max_results=max_results,
+        page_size=page_size,
+    ):
+        events.extend(page)
     return events
 
 

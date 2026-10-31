@@ -14,7 +14,7 @@ import binascii
 import json
 from collections import deque
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -30,12 +30,17 @@ from .paths import ensure_directory
 
 
 class EmailData(TypedDict):
-    """Structured form of one Gmail API message."""
+    """Structured form of one Gmail API message.
+
+    ``date`` is ``None`` when the message carries no parseable Date header.
+    It is deliberately *not* replaced with the current time: inventing a
+    timestamp would misdate evidence in a forensic report.
+    """
 
     id: str | None
     subject: str
     sender: str
-    date: datetime
+    date: datetime | None
     body_html: str
     body_plain: str
     headers: dict[str, Any]
@@ -80,8 +85,8 @@ def parse_gmail_payload(message_json: Mapping[str, Any]) -> EmailData:
         date_dt = dateutil.parser.parse(date_str) if date_str else None
     except (ValueError, OverflowError, TypeError):
         date_dt = None
-    if date_dt is None:
-        date_dt = datetime.now(timezone.utc)
+    # No fallback to "now": a missing or unparseable Date stays unknown
+    # (see EmailData). Callers that need a filename use a "nodate" stem.
 
     body_html = ""
     body_plain = ""
@@ -163,7 +168,11 @@ def generate_forensic_markdown(email_data: EmailData, brand: str) -> str:
     frontmatter = {
         "Brand": brand,
         "Sender": email_data["sender"],
-        "Date": email_data["date"].strftime("%Y-%m-%d %H:%M:%S"),
+        "Date": (
+            email_data["date"].strftime("%Y-%m-%d %H:%M:%S")
+            if email_data["date"] is not None
+            else "Unknown"
+        ),
         "Timezone": timezone_name,
         "Subject": email_data["subject"],
         "MessageID": email_data["id"],

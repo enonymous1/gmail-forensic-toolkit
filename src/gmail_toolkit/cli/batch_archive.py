@@ -29,6 +29,9 @@ def process(
     exports_dir: Path = typer.Option(
         Path("exports"), "--exports-dir", help="Root directory for exports."
     ),
+    brands_path: Path | None = typer.Option(
+        None, "--brands", help="Brands JSON file (defaults to built-in brands)."
+    ),
 ) -> None:
     """Loop through senders from the Contact_Directory.csv in batches."""
     if not directory.exists():
@@ -52,7 +55,13 @@ def process(
         sender_email = sender_email or sender_value.strip()
         count = row.get("Count", "?")
         typer.echo(f"\nProcessing: {sender_email} ({count} msgs)")
-        archive_contact(service, sender_email, limit=limit, exports_dir=exports_dir)
+        archive_contact(
+            service,
+            sender_email,
+            limit=limit,
+            brands_path=brands_path,
+            exports_dir=exports_dir,
+        )
 
 
 if __name__ == "__main__":

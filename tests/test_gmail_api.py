@@ -32,6 +32,22 @@ def test_list_message_ids_pages_and_truncates():
     assert list_message_ids(service, max_results=0) == []
 
 
+def test_list_message_ids_truncates_oversized_page_and_stops_on_repeat():
+    # A page larger than the budget must not overshoot max_results, and a
+    # page token that repeats must end the listing instead of looping.
+    oversized = FakeService(
+        pages={None: {"messages": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}}
+    )
+    assert list_message_ids(oversized, max_results=2) == ["a", "b"]
+    looping = FakeService(
+        pages={
+            None: {"messages": [{"id": "a"}], "nextPageToken": "p"},
+            "p": {"messages": [{"id": "b"}], "nextPageToken": "p"},
+        }
+    )
+    assert list_message_ids(looping) == ["a", "b"]
+
+
 def test_execute_with_retry_retries_transient_then_succeeds():
     attempts = {"count": 0}
 

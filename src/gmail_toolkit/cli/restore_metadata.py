@@ -49,9 +49,16 @@ def rebuild(
             except (json.JSONDecodeError, OSError, AttributeError, TypeError) as exc:
                 typer.echo(f"  Skipping {json_path.name}: {exc}")
                 continue
-            md_content = generate_forensic_markdown(email_data, brand)
-            md_path = parent / f"{json_path.stem}.md"
-            md_path.write_text(md_content, encoding="utf-8")
+            try:
+                md_content = generate_forensic_markdown(email_data, brand)
+                md_path = parent / f"{json_path.stem}.md"
+                md_path.write_text(md_content, encoding="utf-8")
+            except Exception as exc:
+                # Generation can fail on a payload that parses cleanly
+                # (for example an unserialisable frontmatter value); that
+                # must skip one report, not abort the whole rebuild.
+                typer.echo(f"  Skipping {json_path.name}: {exc}")
+                continue
             typer.echo(f"  Restored: {md_path.name}")
             restored += 1
 

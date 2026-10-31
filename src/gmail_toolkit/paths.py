@@ -19,9 +19,14 @@ def sanitize_filename(name: str) -> str:
     return cleaned or "untitled"
 
 
-def get_base_filename(date_dt: datetime, subject: str) -> str:
-    """Return the ``yyyy-MM-dd_HHmm_Subject`` filename stem used for exports."""
-    timestamp = date_dt.strftime("%Y-%m-%d_%H%M")
+def get_base_filename(date_dt: datetime | None, subject: str) -> str:
+    """Return the ``yyyy-MM-dd_HHmm_Subject`` filename stem used for exports.
+
+    A message with no known date gets a ``nodate`` stem instead of an
+    invented timestamp: the filename must never imply a date the payload
+    did not carry.
+    """
+    timestamp = date_dt.strftime("%Y-%m-%d_%H%M") if date_dt is not None else "nodate"
     clean_subject = sanitize_filename(subject)
     return f"{timestamp}_{clean_subject[:100]}"
 

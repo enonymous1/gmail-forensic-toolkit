@@ -33,6 +33,12 @@ def archive_contact(
     exports_dir: Path = Path("exports"),
 ) -> int:
     """Archive messages from *email*; return the number archived."""
+    if brands_path is not None and not Path(brands_path).exists():
+        # A mistyped --brands path must not silently fall back to the
+        # built-in brands: say so, then fall back (load_brands' contract).
+        typer.echo(
+            f"Warning: brands file not found: {brands_path}; using built-in defaults."
+        )
     query = f"from:{email}"
     typer.echo(f"Archiving messages from: {email}")
 

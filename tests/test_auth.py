@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,7 +38,12 @@ def test_save_token_writes_restricted_file(tmp_path):
     fake_creds = SimpleNamespace(to_json=lambda: '{"token": "x"}')
     auth._save_token(token_path, fake_creds)
     assert token_path.read_text(encoding="utf-8") == '{"token": "x"}'
-    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        # Windows has no POSIX mode bits: os.chmod there only toggles
+        # read-only, so a 0600 assertion cannot hold (see _save_token).
+        # The POSIX restriction itself is still asserted on every
+        # POSIX platform, including the Ubuntu CI leg.
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
 
 
 def test_get_gmail_service_missing_client_secrets_raises(monkeypatch, tmp_path):

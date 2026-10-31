@@ -70,8 +70,14 @@ def _load_token(token_path: Path, scopes: list[str]) -> Credentials | None:
 def _save_token(token_path: Path, creds: Credentials) -> None:
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(creds.to_json(), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        os.chmod(token_path, 0o600)
+    if os.name != "nt":
+        # POSIX only: on Windows, os.chmod cannot restrict access — it only
+        # toggles the read-only flag, so the mode would stay 0666 and the
+        # file inherits the parent folder's ACLs instead. Calling chmod
+        # there would silently pretend the file is owner-only when it is
+        # not, which is worse than not calling it.
+        with contextlib.suppress(OSError):
+            os.chmod(token_path, 0o600)
 
 
 def _authenticate(

@@ -87,7 +87,9 @@ gmail-toolkit --version
    CLI from. That directory is git-ignored; never commit it.
 4. Run any command. A browser window opens for the first sign-in, and the
    token is saved to `credentials/token.json` (written with `0600`
-   permissions on POSIX systems). Delete that file to re-authenticate.
+   permissions on POSIX systems; on Windows, POSIX permission bits do
+   not apply, so the file inherits the parent folder's ACLs instead).
+   Delete that file to re-authenticate.
 
 Override the locations with `GMAIL_CREDENTIALS_FILE` and
 `GMAIL_TOKEN_FILE`. Gmail and Calendar share the one token file: a token
@@ -176,7 +178,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.2.0
+ToolkitVersion: 2.2.1
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'

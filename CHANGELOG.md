@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.1 — 2026-10-31
+
+Windows CI fix: the new Windows leg caught a POSIX assumption on its
+first run (see below). No behaviour change on POSIX; no command, flag,
+or export change anywhere.
+
+### Fixed
+
+- `test_save_token_writes_restricted_file` failed on Windows with mode
+  `0o666` (438) instead of `0o600` (384). Cause: on Windows,
+  `os.chmod` only toggles the read-only flag and cannot restrict access,
+  so `_save_token`'s unconditional `chmod(0o600)` succeeded while
+  leaving the file at its default permissions — silently pretending the
+  token was owner-only. `_save_token` now chmods on POSIX only, with a
+  comment saying why, and the test asserts `0o600` on POSIX only. On
+  Windows the token file inherits the parent folder's ACLs, which on a
+  normal single-user profile is user-private in practice; a real
+  Windows ACL lockdown (pywin32/ctypes) is a separate piece of work,
+  deliberately not shipped blind here, since it cannot be verified on
+  this box and a wrong DACL could lock the user out of their own token.
+
 ## 2.2.0 — 2026-10-31
 
 P1 and remaining staff-review items. No command names, flags, or export

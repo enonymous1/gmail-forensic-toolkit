@@ -32,6 +32,16 @@ def get_base_filename(date_dt: datetime | None, subject: str) -> str:
     return f"{timestamp}_{clean_subject[:100]}"
 
 
+def sender_directory_path(exports_dir: str | Path, brand: str, email: str) -> Path:
+    """Return the ``exports/<Brand>/<Sender>/`` path for *email* (no mkdir).
+
+    The dry-run and preview paths use this: computing where a report
+    would land must not create directories as a side effect.
+    """
+    sender_clean = sanitize_filename(email.replace("@", "_at_").replace(".", "_"))
+    return Path(exports_dir) / brand / sender_clean
+
+
 def get_sender_directory(exports_dir: str | Path, brand: str, email: str) -> Path:
     """Return the ensured ``exports/<Brand>/<Sender>/`` directory for *email*.
 
@@ -39,8 +49,7 @@ def get_sender_directory(exports_dir: str | Path, brand: str, email: str) -> Pat
     the same layout the viewer browses: ``@`` becomes ``_at_`` and dots
     become underscores, then illegal filename characters are stripped.
     """
-    sender_clean = sanitize_filename(email.replace("@", "_at_").replace(".", "_"))
-    return ensure_directory(Path(exports_dir) / brand / sender_clean)
+    return ensure_directory(sender_directory_path(exports_dir, brand, email))
 
 
 def ensure_directory(path: str | Path) -> Path:

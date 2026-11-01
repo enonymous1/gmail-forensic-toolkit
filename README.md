@@ -130,6 +130,10 @@ gmail-toolkit archive contact sender@example.com --limit 100
 # offline, no Gmail API call or OAuth)
 gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --limit 1000
 
+# Scope a large Takeout before importing it (both write nothing)
+gmail-toolkit mbox preview ~/Takeout/Mail/"All Mail.mbox"
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --dry-run
+
 # See what organising would do, then do it
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
@@ -200,6 +204,21 @@ bytes are never extracted; only filename, type, and size are recorded
 in the report. No `SourceFiles/` cache is written: the `.mbox` file
 itself is the source of truth, so re-importing is the rebuild path and
 `restore rebuild` does not apply to mbox imports.
+
+Before committing to a large Takeout, scope it first; both commands
+write nothing, not even the exports directory:
+
+- `gmail-toolkit mbox preview <file.mbox>` streams the file once and
+  reports message count, date span (UTC), top senders, how many
+  messages lack a Message-ID or a parseable date, the error rate, and
+  how many messages would be new versus duplicates against the
+  existing exports. It is parse-only, so it is faster per message than
+  an import. `--limit N` previews just the first N messages.
+- `gmail-toolkit mbox import <file.mbox> --dry-run` runs the full
+  import logic with writes disabled, reporting per-sender counts of
+  what would be imported, skipped as duplicates, or skipped as
+  errors. Add `--quiet` to a real import to print only the summary
+  instead of one line per message.
 
 ### Search index (SQLite)
 

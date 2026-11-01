@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.6.0 — 2026-11-01
+
+### Added
+
+- `gmail-toolkit mbox preview <file.mbox>`: a read-only scan of a
+  Takeout file that writes nothing (not even the exports directory).
+  Reports message count, date span in UTC, top senders, how many
+  messages lack a Message-ID or a parseable date, the error rate, and
+  how many messages would be new versus duplicates against the
+  existing exports. Parse-only, so faster per message than an import;
+  `--limit N` previews just the first N messages.
+- `gmail-toolkit mbox import --dry-run`: runs the full import logic
+  with writes disabled, reporting what would be imported, skipped as
+  duplicates, or skipped as errors. `--quiet` on a real import prints
+  only the summary instead of one line per message.
+- Dedupe is now one shared implementation for import and preview, and
+  the sender-directory path computation is split from the mkdir so
+  dry-run and preview never create directories as a side effect.
+
 ## 2.5.0 — 2026-11-01
 
 ### Added

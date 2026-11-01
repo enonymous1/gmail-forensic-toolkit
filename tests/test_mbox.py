@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -170,4 +171,99 @@ def test_mbox_cli(
             app, ["mbox", "import", str(mbox_file), "--exports-dir", "exports"]
         )
     assert result.exit_code == 0, result.output
+    assert "4 imported" in result.output
+
+
+def test_preview_reports_counts(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    data = mbox_module.preview_mbox(mbox_file, exports)
+    assert data["total"] == 5
+    assert data["errors"] == 0
+    assert data["with_message_id"] == 4
+    assert data["without_message_id"] == 1
+    assert data["with_date"] == 4
+    assert data["without_date"] == 1
+    assert data["new"] == 4
+    assert data["duplicates"] == 1
+    assert data["with_attachments"] == 1
+    assert data["sender_count"] == 2
+    assert data["date_min"] == datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)
+    assert data["date_max"] == datetime(2026, 7, 21, 14, 4, tzinfo=timezone.utc)
+    assert data["by_brand"] == [("Individual", 5)]
+    assert data["top_senders"][0] == ("Fictional Sender <sender@example.com>", 4)
+    # Preview writes nothing, not even the exports directory itself.
+    assert not exports.exists()
+
+
+def test_preview_after_import_shows_all_duplicates(
+    tmp_path: Path, mbox_file: Path
+) -> None:
+    exports = tmp_path / "exports"
+    mbox_module.import_mbox(mbox_file, exports, limit=None)
+    data = mbox_module.preview_mbox(mbox_file, exports)
+    assert data["new"] == 0
+    assert data["duplicates"] == 5
+
+
+def test_preview_limit(tmp_path: Path, mbox_file: Path) -> None:
+    data = mbox_module.preview_mbox(mbox_file, tmp_path / "exports", limit=2)
+    assert data["total"] == 2
+
+
+def test_dry_run_writes_nothing(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    counts = mbox_module.import_mbox(mbox_file, exports, dry_run=True)
+    assert counts["imported"] == 4
+    assert counts["duplicates"] == 1
+    # Not a single report file, and not even the exports directory.
+    assert not exports.exists()
+
+
+def test_preview_and_dry_run_cli(
+    tmp_path: Path, mbox_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.invoke(app, ["mbox", "preview", "--help"]).exit_code == 0
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        preview = runner.invoke(
+            app, ["mbox", "preview", str(mbox_file), "--exports-dir", "exports"]
+        )
+        assert preview.exit_code == 0, preview.output
+        assert "Messages: 5" in preview.output
+        assert "4 new" in preview.output
+        dry = runner.invoke(
+            app,
+            [
+                "mbox",
+                "import",
+                str(mbox_file),
+                "--exports-dir",
+                "exports",
+                "--dry-run",
+            ],
+        )
+        assert dry.exit_code == 0, dry.output
+        assert "4 would be imported" in dry.output
+        assert "Would import:" in dry.output
+    assert not (tmp_path / "exports").exists()
+
+
+def test_import_quiet_suppresses_per_message_lines(
+    tmp_path: Path, mbox_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "mbox",
+                "import",
+                str(mbox_file),
+                "--exports-dir",
+                "exports",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert "Imported:" not in result.output
     assert "4 imported" in result.output

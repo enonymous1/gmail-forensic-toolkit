@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -257,3 +258,117 @@ def test_index_cli(
     assert result.exit_code == 0, result.output
     assert "Messages: 3" in result.output
     assert "Example: 2" in result.output
+
+
+def test_schema_v2_columns(tmp_path: Path) -> None:
+    root = tmp_path / "exports"
+    sender_dir = ensure_directory(root / "Example" / "sender_at_example_com")
+    data: EmailData = {
+        "id": "msg-v2",
+        "subject": "Threaded message",
+        "sender": "Fictional Sender <sender@example.com>",
+        "date": datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc),
+        "body_html": "",
+        "body_plain": "thread body",
+        "headers": {
+            "subject": "Threaded message",
+            "from": "Fictional Sender <sender@example.com>",
+            "to": "recipient@example.com",
+            "cc": "copy@example.com",
+            "labelids": ["INBOX", "IMPORTANT"],
+            "in-reply-to": "<parent@example.com>",
+            "references": "<a@example.com> <b@example.com>",
+            "reply-to": "Reply Name <reply@example.com>",
+            "authentication-results": "example.com; spf=pass",
+        },
+        "raw_json": {},
+    }
+    report = generate_forensic_markdown(
+        data,
+        "Example",
+        extra_frontmatter={
+            "SourceFile": "All Mail.mbox",
+            "Attachments": ["report.pdf (application/pdf, 1234 bytes)"],
+        },
+    )
+    (sender_dir / "2026-07-21_1000_Threaded.md").write_text(report, encoding="utf-8")
+    index_db.build_index(root)
+    connection = sqlite3.connect(root / "index.db")
+    connection.row_factory = sqlite3.Row
+    row = connection.execute("SELECT * FROM messages").fetchone()
+    assert row["recipients_to"] == "recipient@example.com"
+    assert row["recipients_cc"] == "copy@example.com"
+    assert json.loads(row["labels"]) == ["INBOX", "IMPORTANT"]
+    assert row["attachment_count"] == 1
+    assert json.loads(row["attachment_names"]) == [
+        "report.pdf (application/pdf, 1234 bytes)"
+    ]
+    assert row["source_file"] == "All Mail.mbox"
+    assert row["in_reply_to"] == "<parent@example.com>"
+    assert row["references_header"] == "<a@example.com> <b@example.com>"
+    assert row["reply_to"] == "Reply Name <reply@example.com>"
+    assert row["auth_results"] == "example.com; spf=pass"
+    version = connection.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    assert version == "2"
+    connection.close()
+
+
+def test_old_format_report_gets_v2_defaults(tmp_path: Path) -> None:
+    root = tmp_path / "exports"
+    sender_dir = ensure_directory(root / "Example" / "sender_at_example_com")
+    (sender_dir / "2026-07-21_1000_Old.md").write_text(
+        "---\n"
+        "Brand: Example\n"
+        "Sender: Fictional Sender <sender@example.com>\n"
+        "ToolkitVersion: 2.5.0\n"
+        "Date: '2026-07-21 10:00:00'\n"
+        "Timezone: '-0400'\n"
+        "Subject: 'Old report'\n"
+        "MessageID: msg-old\n"
+        "Type: Meeting\n"
+        "Scope: Direct (1:1)\n"
+        "---\n\n"
+        "> [!INFO] **Forensic Classification**\n"
+        "> - **Tracking**: Pixels: 0, Links: 0\n"
+        "---\n\n"
+        "old body\n",
+        encoding="utf-8",
+    )
+    index_db.build_index(root)
+    connection = sqlite3.connect(root / "index.db")
+    connection.row_factory = sqlite3.Row
+    row = connection.execute("SELECT * FROM messages").fetchone()
+    assert row["recipients_to"] == ""
+    assert row["labels"] == "[]"
+    assert row["attachment_count"] == 0
+    assert row["source_file"] == ""
+    connection.close()
+
+
+def test_update_rebuilds_v1_database(tmp_path: Path, exports_dir: Path) -> None:
+    db = exports_dir / "index.db"
+    connection = sqlite3.connect(db)
+    connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    connection.execute("INSERT INTO meta VALUES ('schema_version', '1')")
+    connection.execute(
+        "CREATE TABLE messages ("
+        "report_path TEXT PRIMARY KEY, message_id TEXT, brand TEXT, "
+        "sender TEXT, subject TEXT, date TEXT, type TEXT, scope TEXT, "
+        "timezone TEXT, tracking_pixels INTEGER, tracking_links INTEGER, "
+        "mtime REAL, size INTEGER)"
+    )
+    connection.commit()
+    connection.close()
+    counts = index_db.update_index(exports_dir)
+    assert counts["messages"] == 3
+    connection = sqlite3.connect(db)
+    version = connection.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    assert version == "2"
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
+    assert "labels" in columns
+    assert "source_file" in columns
+    connection.close()

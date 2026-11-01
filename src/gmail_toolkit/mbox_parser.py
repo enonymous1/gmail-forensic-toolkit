@@ -205,6 +205,13 @@ def parse_message(msg: Message) -> ParsedMboxMessage:
         "received": " ".join(msg.get_all("Received", [])),
         "list-id": msg.get("List-ID", "") or "",
         "precedence": msg.get("Precedence", "") or "",
+        # Threading and authentication headers are evidence, not noise:
+        # the generator emits them into frontmatter, so keep them here
+        # rather than dropping them at parse time.
+        "in-reply-to": msg.get("In-Reply-To", "") or "",
+        "references": msg.get("References", "") or "",
+        "reply-to": _format_addresses(msg.get("Reply-To")),
+        "authentication-results": msg.get("Authentication-Results", "") or "",
         "labelids": labels,
     }
 

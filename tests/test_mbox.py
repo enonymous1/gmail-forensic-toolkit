@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from email import message_from_string
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from gmail_toolkit.cli import mbox as mbox_module
@@ -267,3 +270,165 @@ def test_import_quiet_suppresses_per_message_lines(
     assert result.exit_code == 0, result.output
     assert "Imported:" not in result.output
     assert "4 imported" in result.output
+
+
+_LABELED_MBOX = """From sender@example.com Mon Jul 21 10:00:00 2026
+Message-ID: <lab1@example.com>
+From: Fictional Sender <sender@example.com>
+To: recipient@example.com
+Cc: copy@example.com
+X-Gmail-Labels: INBOX, IMPORTANT
+Date: Mon, 21 Jul 2026 10:00:00 -0400
+Subject: Labeled message
+Content-Type: text/plain; charset="utf-8"
+
+Labeled body.
+"""
+
+# Two distinct messages that collide on one fallback id: same sender,
+# subject, and Date header, and identical first 1,000 plain characters,
+# but different full bodies. Only the full-body hash tells them apart.
+_COLLISION_MBOX = (
+    """From sender@example.com Mon Jul 21 10:00:00 2026
+From: Fictional Sender <sender@example.com>
+Date: Mon, 21 Jul 2026 10:00:00 -0400
+Subject: Identical alert
+Content-Type: text/plain; charset="utf-8"
+
+"""
+    + "A" * 1000
+    + """ one.
+From sender@example.com Mon Jul 21 10:00:00 2026
+From: Fictional Sender <sender@example.com>
+Date: Mon, 21 Jul 2026 10:00:00 -0400
+Subject: Identical alert
+Content-Type: text/plain; charset="utf-8"
+
+"""
+    + "A" * 1000
+    + """ two.
+"""
+)
+
+
+def _frontmatter_of(report_path: Path) -> dict:
+    text = report_path.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    closing = text.find("\n---\n", 4)
+    return yaml.safe_load(text[4:closing])
+
+
+def test_parser_keeps_threading_and_auth_headers() -> None:
+    msg = message_from_string(
+        "From: Fictional Sender <sender@example.com>\n"
+        "Subject: Re: hello\n"
+        "In-Reply-To: <parent@example.com>\n"
+        "References: <a@example.com> <b@example.com>\n"
+        "Reply-To: Reply Name <reply@example.com>\n"
+        "Authentication-Results: example.com; spf=pass dkim=pass\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n"
+        "Body.\n"
+    )
+    parsed = mbox_module.parse_message(msg)
+    assert parsed.headers["in-reply-to"] == "<parent@example.com>"
+    assert parsed.headers["references"] == "<a@example.com> <b@example.com>"
+    assert parsed.headers["reply-to"] == "Reply Name <reply@example.com>"
+    assert parsed.headers["authentication-results"] == "example.com; spf=pass dkim=pass"
+
+
+def test_imported_report_carries_full_fidelity_frontmatter(
+    tmp_path: Path,
+) -> None:
+    mbox_file = tmp_path / "labeled.mbox"
+    mbox_file.write_text(_LABELED_MBOX, encoding="utf-8")
+    exports = tmp_path / "exports"
+    counts = mbox_module.import_mbox(mbox_file, exports)
+    assert counts["imported"] == 1
+    reports = list(exports.rglob("*.md"))
+    assert len(reports) == 1
+    data = _frontmatter_of(reports[0])
+    assert data["To"] == "recipient@example.com"
+    assert data["Cc"] == "copy@example.com"
+    assert data["Labels"] == ["INBOX", "IMPORTANT"]
+    assert data["SourceFile"] == str(mbox_file)
+    assert data["Attachments"] == []
+    preview = mbox_module.preview_mbox(mbox_file, exports)
+    assert preview["by_label"] == [("INBOX", 1), ("IMPORTANT", 1)]
+
+
+def test_import_journal(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    log = tmp_path / "import.jsonl"
+    mbox_module.import_mbox(mbox_file, exports, log_path=log)
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    messages = [r for r in records if r["event"] == "message"]
+    summaries = [r for r in records if r["event"] == "summary"]
+    assert len(messages) == 5
+    assert len(summaries) == 1
+    outcomes = sorted(r["outcome"] for r in messages)
+    assert outcomes == ["duplicate", "imported", "imported", "imported", "imported"]
+    assert all(r["body_sha256"] for r in messages)
+    assert all(r["report"] for r in messages if r["outcome"] == "imported")
+    summary = summaries[0]
+    assert summary["imported"] == 4
+    assert summary["duplicates"] == 1
+    assert summary["dry_run"] is False
+    assert summary["source"] == str(mbox_file)
+
+
+def test_verify_before_and_after_import(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    before = mbox_module.verify_mbox(mbox_file, exports)
+    assert before["verified"] == 0
+    assert before["missing"] == 4
+    assert before["duplicates"] == 1
+    # The fixture's "duplicate" reuses msg1's id with a different
+    # subject, date, and body, so it is a message-id collision too —
+    # exactly the case plain dedupe cannot see.
+    assert before["collisions"] == 1
+    assert before["collision_details"][0]["kind"] == "message-id"
+    assert len(before["missing_details"]) == 4
+    # Verify writes nothing, not even the exports directory.
+    assert not exports.exists()
+    mbox_module.import_mbox(mbox_file, exports)
+    after = mbox_module.verify_mbox(mbox_file, exports)
+    assert after["verified"] == 4
+    assert after["missing"] == 0
+    assert after["duplicates"] == 1
+    assert after["collisions"] == 1
+    assert after["missing_details"] == []
+
+
+def test_verify_flags_fallback_collision(tmp_path: Path) -> None:
+    mbox_file = tmp_path / "collision.mbox"
+    mbox_file.write_text(_COLLISION_MBOX, encoding="utf-8")
+    exports = tmp_path / "exports"
+    data = mbox_module.verify_mbox(mbox_file, exports)
+    assert data["total"] == 2
+    assert data["missing"] == 1
+    assert data["duplicates"] == 1
+    assert data["collisions"] == 1
+    collision = data["collision_details"][0]
+    assert collision["kind"] == "fallback"
+    assert collision["first_index"] == 0
+    assert collision["index"] == 1
+    # The import itself still dedupes the second message; verify is
+    # what makes that silent loss visible.
+    counts = mbox_module.import_mbox(mbox_file, exports)
+    assert counts["imported"] == 1
+    assert counts["duplicates"] == 1
+
+
+def test_verify_cli(
+    tmp_path: Path, mbox_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.invoke(app, ["mbox", "verify", "--help"]).exit_code == 0
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        result = runner.invoke(
+            app, ["mbox", "verify", str(mbox_file), "--exports-dir", "exports"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "missing: 4" in result.output
+    assert "Missing reports:" in result.output

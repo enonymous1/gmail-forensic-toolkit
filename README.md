@@ -134,6 +134,10 @@ gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --limit 1000
 gmail-toolkit mbox preview ~/Takeout/Mail/"All Mail.mbox"
 gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --dry-run
 
+# Import with a journal, then prove it completed
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --log import.jsonl
+gmail-toolkit mbox verify ~/Takeout/Mail/"All Mail.mbox"
+
 # See what organising would do, then do it
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
@@ -220,6 +224,33 @@ write nothing, not even the exports directory:
   errors. Add `--quiet` to a real import to print only the summary
   instead of one line per message.
 
+After an import, prove it completed instead of trusting the summary
+that scrolled by:
+
+- `gmail-toolkit mbox import <file.mbox> --log import.jsonl` appends
+  one JSON record per message outcome (imported, duplicate, or error
+  with the error text, plus report path and a full-body hash) and a
+  summary record, so errors and skips survive the terminal.
+- `gmail-toolkit mbox verify <file.mbox>` re-streams the file and
+  reconciles it against the exports, writing nothing. It reports how
+  many messages already have a report, how many are in-file
+  duplicates, and the actionable remainder: Message-IDs in the file
+  with no report, with sender and subject for each. It also flags
+  collisions — same id, different body — which plain dedupe cannot
+  see, including two distinct messages without a Message-ID that
+  collided on one fallback id. Re-running an import is already safe
+  (dedupe skips what is imported, writes are atomic), so resume is
+  just re-running it; verify is what tells you it finished. Use the
+  same `--brands` for verify as for the import, since brand
+  resolution decides which directory a report lives in.
+
+Imported reports carry the metadata the source message carried, in
+frontmatter: recipients (To, Cc), Gmail labels (label names from
+`X-Gmail-Labels` for Takeout imports; label IDs for API archives),
+threading headers (In-Reply-To, References, Reply-To),
+Authentication-Results, the source Takeout file, and attachment names
+with type and size. Attachment bytes are still never extracted.
+
 ### Search index (SQLite)
 
 `gmail-toolkit index build` scans `exports/` into a SQLite database at
@@ -238,11 +269,15 @@ and an update re-scans the directory listing and re-parses only files
 that are new, changed, or gone. Deleting `index.db` is always a valid
 recovery. Nothing in the toolkit writes to the database at
 archive/import time, so there is exactly one writer and one reader
-direction (files into database). Labels are indexed as the inventory
-only — report frontmatter does not carry per-message label
-membership, so the index cannot answer "messages with label X". The
-viewer is not wired to the index yet; that is a later step, not part
-of this release.
+direction (files into database). Schema version 2 adds per-message
+columns for the metadata reports now carry: recipients (To, Cc),
+labels, attachment count and names, the import source file, and
+threading and authentication headers. A version 1 database is
+detected as a schema mismatch and fully rebuilt on the next update.
+The `labels` table still holds the inventory; per-message membership
+now lives on each message row, though search does not filter by label
+yet. The viewer is not wired to the index yet; that is a later step,
+not part of this release.
 
 ### Local viewer (read-only)
 
@@ -270,13 +305,21 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.5.0
+ToolkitVersion: 2.7.0
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
 MessageID: msg-1
 Type: Meeting
 Scope: Direct (1:1)
+To: recipient@example.com
+Cc: ''
+Labels:
+- INBOX
+InReplyTo: ''
+References: ''
+ReplyTo: ''
+AuthenticationResults: ''
 ---
 
 > [!INFO] **Forensic Classification**

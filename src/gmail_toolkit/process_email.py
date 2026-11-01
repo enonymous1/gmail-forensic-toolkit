@@ -185,13 +185,39 @@ def convert_html_to_markdown(html_content: str) -> str:
     return soup.get_text()
 
 
-def generate_forensic_markdown(email_data: EmailData, brand: str) -> str:
-    """Assemble YAML frontmatter, an ``[!INFO]`` block, and the body."""
+def generate_forensic_markdown(
+    email_data: EmailData,
+    brand: str,
+    extra_frontmatter: dict[str, object] | None = None,
+) -> str:
+    """Assemble YAML frontmatter, an ``[!INFO]`` block, and the body.
+
+    The frontmatter carries the message's metadata, not just the
+    forensic verdict: recipients, Gmail labels, and threading and
+    authentication headers, so a report (and the index built from it)
+    does not silently drop what the source message carried. API
+    reports carry label IDs here (from the API's ``labelIds``) while
+    Takeout reports carry label names (from ``X-Gmail-Labels``).
+    ``extra_frontmatter`` adds caller-specific keys (the importer
+    passes ``SourceFile`` and ``Attachments``); it never overrides a
+    standard key.
+    """
     msg_type, msg_scope = classify_message(email_data["subject"], email_data["headers"])
     pixels, links = detect_tracking(email_data["body_html"])
     timezone_name = get_sender_timezone(email_data["headers"])
+    headers = email_data["headers"]
 
-    frontmatter = {
+    def _header(key: str) -> str:
+        value = headers.get(key, "")
+        return "" if value is None else str(value)
+
+    def _labels() -> list[str]:
+        raw = headers.get("labelids", []) or []
+        if isinstance(raw, str):
+            return [raw]
+        return [str(item) for item in raw]
+
+    frontmatter: dict[str, object] = {
         "Brand": brand,
         "Sender": email_data["sender"],
         "ToolkitVersion": __version__,
@@ -205,7 +231,17 @@ def generate_forensic_markdown(email_data: EmailData, brand: str) -> str:
         "MessageID": email_data["id"],
         "Type": msg_type,
         "Scope": msg_scope,
+        "To": _header("to"),
+        "Cc": _header("cc"),
+        "Labels": _labels(),
+        "InReplyTo": _header("in-reply-to"),
+        "References": _header("references"),
+        "ReplyTo": _header("reply-to"),
+        "AuthenticationResults": _header("authentication-results"),
     }
+    if extra_frontmatter:
+        for key, value in extra_frontmatter.items():
+            frontmatter.setdefault(key, value)
 
     yaml_block = f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n"
 

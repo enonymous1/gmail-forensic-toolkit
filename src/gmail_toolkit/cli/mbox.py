@@ -25,11 +25,21 @@ Import contract, mirroring the explorer's ingester:
   span, top senders, new-vs-duplicate breakdown), and ``import
   --dry-run`` runs the import logic with writes disabled, so a large
   Takeout can be scoped before committing to it.
+- ``import --log`` appends one JSON record per message outcome (plus
+  a summary record) to a journal file, so errors and skips survive
+  the terminal. ``verify`` re-streams a file and reconciles it
+  against the reports, listing Message-IDs in the file with no
+  report — the back-check that proves an import completed.
+- Imported reports carry the metadata the source message carried:
+  recipients, Gmail labels, threading and authentication headers,
+  the source Takeout file, and attachment names, in frontmatter.
+  Attachment bytes are still never extracted.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -41,6 +51,7 @@ import typer
 from ..branding import resolve_brand
 from ..mbox_parser import AttachmentMeta, ParsedMboxMessage, iter_mbox, parse_message
 from ..paths import (
+    ensure_directory,
     get_base_filename,
     get_sender_directory,
     next_available_path,
@@ -80,13 +91,35 @@ class _DedupeTracker:
         self.existing_by_dir: dict[Path, set[str]] = {}
 
     def is_duplicate(self, message_id: str, sender_dir: Path) -> bool:
+        return self.status(message_id, sender_dir) != "missing"
+
+    def status(self, message_id: str, sender_dir: Path) -> str:
+        """Classify *message_id*: ``seen``, ``imported``, or ``missing``.
+
+        ``seen`` means already encountered in this run, ``imported``
+        means already present in the destination directory from an
+        earlier run, ``missing`` means neither. Import and preview
+        only need the duplicate question; verify needs all three.
+        """
         if message_id in self.seen:
-            return True
+            return "seen"
         self.seen.add(message_id)
         existing = self.existing_by_dir.setdefault(
             sender_dir, _existing_message_ids(sender_dir)
         )
-        return message_id in existing
+        return "imported" if message_id in existing else "missing"
+
+
+def _body_hash(parsed: ParsedMboxMessage) -> str:
+    """Full-body hash, for telling true duplicates from collisions.
+
+    The fallback id hashes only sender, subject, date header, and the
+    first 1,000 plain characters, so two different messages can share
+    one. Comparing full-body hashes separates a true duplicate
+    (identical body) from a collision (same id, different body).
+    """
+    material = f"{parsed.body_plain}\n{parsed.body_html}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _fallback_id(parsed: ParsedMboxMessage) -> str:
@@ -159,6 +192,7 @@ def import_mbox(
     limit: int | None = None,
     dry_run: bool = False,
     quiet: bool = False,
+    log_path: Path | None = None,
 ) -> dict[str, int]:
     """Import *mbox_path*; return counts of total/imported/duplicates/errors.
 
@@ -166,20 +200,28 @@ def import_mbox(
     nothing is written: no report files and no directories are created,
     and ``imported`` counts messages that *would* be imported. With
     ``quiet`` set, the per-message lines are suppressed; warnings and
-    the final summary still print.
+    the final summary still print. With ``log_path`` set, one JSON
+    record per message outcome plus a summary record is appended to
+    that file, so errors and skips survive the terminal.
     """
     _warn_missing_brands(brands_path)
     counts = {"total": 0, "imported": 0, "duplicates": 0, "errors": 0}
     tracker = _DedupeTracker(exports_dir)
+    log_handle = None
+    if log_path is not None:
+        ensure_directory(Path(log_path).parent)
+        log_handle = Path(log_path).open("a", encoding="utf-8")  # noqa: SIM115 - closed in finally below
     messages = iter_mbox(mbox_path)
     try:
         for index, msg in enumerate(messages):
             if limit is not None and counts["total"] >= limit:
                 break
             counts["total"] += 1
+            record_id: str | None = None
             try:
                 parsed = parse_message(msg)
                 message_id = parsed.message_id or _fallback_id(parsed)
+                record_id = message_id
                 brand = resolve_brand(parsed.sender, brands_path)
                 sender_email = parsed.sender_address or parsed.sender
                 # Dry-run must not create directories as a side effect,
@@ -191,24 +233,92 @@ def import_mbox(
                 )
                 if tracker.is_duplicate(message_id, sender_dir):
                     counts["duplicates"] += 1
-                    continue
-                email_data = _to_email_data(parsed, message_id)
-                stem = get_base_filename(email_data["date"], email_data["subject"])
-                md_path = next_available_path(sender_dir / f"{stem}.md")
-                report = generate_forensic_markdown(email_data, brand)
-                if parsed.attachments:
-                    report += _attachments_section(parsed.attachments)
-                if not dry_run:
-                    write_text_atomic(md_path, report)
-                counts["imported"] += 1
-                if not quiet:
-                    verb = "Would import" if dry_run else "Imported"
-                    typer.echo(f"  {verb}: {md_path.name}")
+                    outcome = "duplicate"
+                    report_name: str | None = None
+                else:
+                    email_data = _to_email_data(parsed, message_id)
+                    stem = get_base_filename(email_data["date"], email_data["subject"])
+                    md_path = next_available_path(sender_dir / f"{stem}.md")
+                    report = generate_forensic_markdown(
+                        email_data,
+                        brand,
+                        extra_frontmatter={
+                            "SourceFile": str(mbox_path),
+                            "Attachments": [
+                                f"{a.filename or '(unnamed)'} "
+                                f"({a.content_type}, {a.size_bytes} bytes)"
+                                for a in parsed.attachments
+                            ],
+                        },
+                    )
+                    if parsed.attachments:
+                        report += _attachments_section(parsed.attachments)
+                    if not dry_run:
+                        write_text_atomic(md_path, report)
+                    counts["imported"] += 1
+                    outcome = "imported"
+                    report_name = str(md_path)
+                    if not quiet:
+                        verb = "Would import" if dry_run else "Imported"
+                        typer.echo(f"  {verb}: {md_path.name}")
+                if log_handle is not None:
+                    log_handle.write(
+                        json.dumps(
+                            {
+                                "event": "message",
+                                "index": index,
+                                "message_id": message_id,
+                                "subject": parsed.subject,
+                                "sender": parsed.sender,
+                                "date": (
+                                    parsed.date.isoformat()
+                                    if parsed.date is not None
+                                    else None
+                                ),
+                                "outcome": outcome,
+                                "report": report_name,
+                                "body_sha256": _body_hash(parsed),
+                                "error": None,
+                            }
+                        )
+                        + "\n"
+                    )
             except Exception as exc:  # noqa: BLE001 - resilience is the contract
                 counts["errors"] += 1
                 typer.echo(f"Warning: skipping message {index}: {exc}; continuing.")
+                if log_handle is not None:
+                    log_handle.write(
+                        json.dumps(
+                            {
+                                "event": "message",
+                                "index": index,
+                                "message_id": record_id,
+                                "subject": None,
+                                "sender": None,
+                                "date": None,
+                                "outcome": "error",
+                                "report": None,
+                                "body_sha256": None,
+                                "error": str(exc),
+                            }
+                        )
+                        + "\n"
+                    )
     finally:
         messages.close()
+        if log_handle is not None:
+            log_handle.write(
+                json.dumps(
+                    {
+                        "event": "summary",
+                        "source": str(mbox_path),
+                        "dry_run": dry_run,
+                        **counts,
+                    }
+                )
+                + "\n"
+            )
+            log_handle.close()
     return counts
 
 
@@ -229,6 +339,7 @@ def preview_mbox(
     _warn_missing_brands(brands_path)
     sender_counts: Counter[str] = Counter()
     brand_counts: Counter[str] = Counter()
+    label_counts: Counter[str] = Counter()
     date_min: datetime | None = None
     date_max: datetime | None = None
     counts = {
@@ -278,6 +389,8 @@ def preview_mbox(
             sender_counts[parsed.sender or "Unknown Sender"] += 1
             brand = resolve_brand(parsed.sender, brands_path)
             brand_counts[brand] += 1
+            for label in parsed.headers.get("labelids", []) or []:
+                label_counts[str(label)] += 1
             if parsed.attachments:
                 counts["with_attachments"] += 1
             sender_dir = sender_directory_path(
@@ -296,6 +409,103 @@ def preview_mbox(
         "sender_count": len(sender_counts),
         "top_senders": sender_counts.most_common(10),
         "by_brand": brand_counts.most_common(),
+        "by_label": label_counts.most_common(),
+    }
+
+
+def verify_mbox(
+    mbox_path: Path,
+    exports_dir: Path = Path("exports"),
+    brands_path: Path | None = None,
+    limit: int | None = None,
+) -> dict[str, object]:
+    """Reconcile *mbox_path* against the reports in *exports_dir*.
+
+    Writes nothing. Every message in the file is classified: present
+    in the exports (``verified``), an in-file repeat (``duplicates``),
+    or absent from the exports (``missing``, with details). Messages
+    sharing an id but with different bodies are reported as
+    ``collisions`` — the case plain dedupe cannot see, including two
+    distinct no-ID messages that collided on one fallback id.
+    Body hashes are truncated to 64 bits in memory: plenty to tell
+    bodies apart, without holding a full hash per message for a huge
+    file. Brand resolution uses the current brands settings, so run
+    verify with the same ``--brands`` the import used.
+    """
+    _warn_missing_brands(brands_path)
+    counts = {
+        "total": 0,
+        "errors": 0,
+        "verified": 0,
+        "duplicates": 0,
+        "missing": 0,
+        "collisions": 0,
+    }
+    missing_details: list[dict[str, object]] = []
+    collision_details: list[dict[str, object]] = []
+    error_details: list[dict[str, object]] = []
+    tracker = _DedupeTracker(exports_dir)
+    body_hashes: dict[str, tuple[str, int]] = {}
+    messages = iter_mbox(mbox_path)
+    try:
+        for index, msg in enumerate(messages):
+            if limit is not None and counts["total"] >= limit:
+                break
+            counts["total"] += 1
+            try:
+                parsed = parse_message(msg)
+            except Exception as exc:  # noqa: BLE001 - resilience is the contract
+                counts["errors"] += 1
+                error_details.append({"index": index, "error": str(exc)})
+                continue
+            message_id = parsed.message_id or _fallback_id(parsed)
+            short_hash = _body_hash(parsed)[:16]
+            previous = body_hashes.get(message_id)
+            if previous is not None and previous[0] != short_hash:
+                counts["collisions"] += 1
+                collision_details.append(
+                    {
+                        "message_id": message_id,
+                        "kind": (
+                            "fallback" if parsed.message_id is None else "message-id"
+                        ),
+                        "first_index": previous[1],
+                        "index": index,
+                        "sender": parsed.sender,
+                        "subject": parsed.subject,
+                    }
+                )
+            else:
+                body_hashes.setdefault(message_id, (short_hash, index))
+            brand = resolve_brand(parsed.sender, brands_path)
+            sender_dir = sender_directory_path(
+                exports_dir, brand, parsed.sender_address or parsed.sender
+            )
+            status = tracker.status(message_id, sender_dir)
+            if status == "seen":
+                counts["duplicates"] += 1
+            elif status == "imported":
+                counts["verified"] += 1
+            else:
+                counts["missing"] += 1
+                missing_details.append(
+                    {
+                        "message_id": message_id,
+                        "sender": parsed.sender,
+                        "subject": parsed.subject,
+                        "date": (
+                            parsed.date.isoformat() if parsed.date is not None else None
+                        ),
+                        "index": index,
+                    }
+                )
+    finally:
+        messages.close()
+    return {
+        **counts,
+        "missing_details": missing_details,
+        "collision_details": collision_details,
+        "error_details": error_details,
     }
 
 
@@ -324,6 +534,11 @@ def import_command(
     quiet: bool = typer.Option(
         False, "--quiet", help="Print only the summary, not one line per message."
     ),
+    log_path: Path | None = typer.Option(
+        None,
+        "--log",
+        help="Append one JSON record per message outcome, plus a summary, to PATH.",
+    ),
 ) -> None:
     """Import a Takeout .mbox file as forensic Markdown reports.
 
@@ -331,7 +546,9 @@ def import_command(
     malformed message is counted and skipped, and attachment bytes are
     never extracted (only metadata is recorded in the report).
     """
-    counts = import_mbox(mbox_path, exports_dir, brands_path, limit, dry_run, quiet)
+    counts = import_mbox(
+        mbox_path, exports_dir, brands_path, limit, dry_run, quiet, log_path
+    )
     verb = "would be imported" if dry_run else "imported"
     typer.echo(
         f"\n{counts['imported']} {verb}, {counts['duplicates']} duplicate(s) "
@@ -388,6 +605,67 @@ def preview(
     typer.echo("By brand:")
     for brand, count in cast(list[tuple[str, int]], data["by_brand"]):
         typer.echo(f"  {brand}: {count}")
+    typer.echo("By label:")
+    for label, count in cast(list[tuple[str, int]], data["by_label"]):
+        typer.echo(f"  {label}: {count}")
     typer.echo("Top senders:")
     for sender, count in cast(list[tuple[str, int]], data["top_senders"]):
         typer.echo(f"  {sender}: {count}")
+
+
+@app.command()
+def verify(
+    mbox_path: Path = typer.Argument(
+        ..., exists=True, help="Path to the .mbox file to reconcile."
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        callback=positive_int_callback,
+        help="Maximum messages to check from the file.",
+    ),
+    brands_path: Path | None = typer.Option(
+        None, "--brands", help="Brands JSON file (defaults to built-in brands)."
+    ),
+    exports_dir: Path = typer.Option(
+        Path("exports"), "--exports-dir", help="Root directory for exports."
+    ),
+) -> None:
+    """Reconcile a Takeout .mbox file against the exports, writing nothing.
+
+    Reports how many messages in the file already have a report, how
+    many are in-file duplicates, and — the actionable part — which
+    messages have no report, plus any id collisions (same id, different
+    body) and unparseable messages. Run it after an import to prove
+    the import completed; use the same ``--brands`` the import used.
+    """
+    data = verify_mbox(mbox_path, exports_dir, brands_path, limit)
+    typer.echo(f"Verify: {mbox_path}")
+    typer.echo(f"Messages: {data['total']} ({data['errors']} error(s) unparseable)")
+    typer.echo(
+        f"Verified present: {data['verified']}, "
+        f"in-file duplicates: {data['duplicates']}, "
+        f"missing: {data['missing']}, collisions: {data['collisions']}"
+    )
+    missing = cast(list[dict[str, object]], data["missing_details"])
+    if missing:
+        typer.echo("Missing reports:")
+        for item in missing:
+            typer.echo(
+                f"  {item['message_id']} — {item['sender']} — "
+                f"{str(item['subject'])[:80]}"
+            )
+    collisions = cast(list[dict[str, object]], data["collision_details"])
+    if collisions:
+        typer.echo("Collisions (same id, different body):")
+        for item in collisions:
+            typer.echo(
+                f"  {item['message_id']} ({item['kind']}) — first at "
+                f"#{item['first_index']}, again at #{item['index']} — "
+                f"{item['sender']} — {str(item['subject'])[:80]}"
+            )
+    errors = cast(list[dict[str, object]], data["error_details"])
+    if errors:
+        typer.echo("Unparseable messages:")
+        for item in errors:
+            typer.echo(f"  #{item['index']}: {item['error']}")

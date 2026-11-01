@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.7.0 — 2026-11-01
+
+### Added
+
+- `gmail-toolkit mbox verify <file.mbox>`: a read-only back-check
+  that re-streams a Takeout file and reconciles it against the
+  exports, reporting verified, in-file duplicates, missing (with
+  Message-ID, sender, and subject for each), collisions (same id,
+  different body, including fallback-id collisions between distinct
+  no-ID messages), and unparseable messages. Re-running an import is
+  already safe (dedupe + atomic writes), so resume is just
+  re-running it; verify is what proves it finished. Use the same
+  `--brands` for verify as for the import.
+- `gmail-toolkit mbox import --log <file.jsonl>`: appends one JSON
+  record per message outcome (imported, duplicate, or error with the
+  error text, plus report path and a full-body hash) and a summary
+  record, so errors and skips survive the terminal.
+- Full-fidelity frontmatter, for both API and Takeout reports:
+  recipients (To, Cc), Gmail labels (names for Takeout, IDs for
+  API), threading headers (In-Reply-To, References, Reply-To), and
+  Authentication-Results. Takeout reports additionally carry the
+  source file and attachment names with type and size.
+- Index schema version 2: per-message columns for recipients,
+  labels, attachment count and names, source file, and threading and
+  authentication headers. A version 1 database is detected as a
+  schema mismatch and fully rebuilt on the next `index update`.
+  Old-format reports without the new keys index with empty defaults.
+- `mbox preview` now also reports the label distribution of the
+  file.
+
+### Deliberately not done
+
+- Attachment bytes are still never extracted; only metadata is
+  recorded. Extraction to disk, referenced from the database, is a
+  separate decision (attachments can carry malware).
+- Search does not filter by label yet; labels are stored
+  per-message but not yet a search filter or FTS term.
+- The API archive path does not record attachment metadata yet;
+  only Takeout imports do.
+
 ## 2.6.0 — 2026-11-01
 
 ### Added

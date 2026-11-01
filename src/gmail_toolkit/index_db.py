@@ -13,19 +13,26 @@ this database at archive/import time — there is exactly one writer
 (the index commands) and one reader direction (files -> database) —
 so the two can never disagree the way two writers can.
 
-Schema (version 1):
+Schema (version 2):
 - ``messages``: one row per ``*.md`` report, keyed by report path.
   Frontmatter fields plus tracking counts from the report's INFO
-  block, plus the manifest columns (``mtime``, ``size``).
+  block, plus the manifest columns (``mtime``, ``size``). Version 2
+  adds the metadata frontmatter gained at the same time: recipients,
+  per-message labels, attachment count and names, the import source
+  file, and threading and authentication headers. A version 1 database
+  is detected as a schema mismatch and fully rebuilt on update.
 - ``messages_fts``: FTS5 over brand, sender, subject, and body, with
   the report path as an UNINDEXED column to join back to ``messages``.
+  The new structured columns are not FTS terms; they are for exact
+  filtering, not content search.
 - ``labels``: the label inventory (``labels.json``), not per-message
-  membership — report frontmatter does not carry label membership.
+  membership — that now lives on each ``messages`` row instead.
 - ``events``: every exported calendar ``events.csv`` row.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -33,7 +40,7 @@ from typing import Any
 
 import yaml
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 _TRACKING_RE = re.compile(r"Pixels:\s*(\d+),\s*Links:\s*(\d+)")
 
@@ -72,6 +79,16 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             timezone TEXT NOT NULL DEFAULT '',
             tracking_pixels INTEGER NOT NULL DEFAULT 0,
             tracking_links INTEGER NOT NULL DEFAULT 0,
+            recipients_to TEXT NOT NULL DEFAULT '',
+            recipients_cc TEXT NOT NULL DEFAULT '',
+            labels TEXT NOT NULL DEFAULT '[]',
+            attachment_count INTEGER NOT NULL DEFAULT 0,
+            attachment_names TEXT NOT NULL DEFAULT '[]',
+            source_file TEXT NOT NULL DEFAULT '',
+            in_reply_to TEXT NOT NULL DEFAULT '',
+            references_header TEXT NOT NULL DEFAULT '',
+            reply_to TEXT NOT NULL DEFAULT '',
+            auth_results TEXT NOT NULL DEFAULT '',
             mtime REAL NOT NULL,
             size INTEGER NOT NULL
         );
@@ -167,7 +184,21 @@ def _parse_report_file(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         value = frontmatter.get(key, default)
         return "" if value is None else str(value)
 
+    def _string_list(key: str) -> list[str]:
+        # New frontmatter writes these as YAML lists; old reports lack
+        # the keys entirely, and a hand-edited report might hold a
+        # single string. All three degrade to a list of strings.
+        value = frontmatter.get(key)
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [str(value)]
+
     message_id = frontmatter.get("MessageID")
+    attachments = _string_list("Attachments")
     row = {
         "report_path": path.relative_to(root).as_posix(),
         "message_id": None if message_id is None else str(message_id),
@@ -180,6 +211,16 @@ def _parse_report_file(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         "timezone": _text("Timezone"),
         "tracking_pixels": pixels,
         "tracking_links": links,
+        "recipients_to": _text("To"),
+        "recipients_cc": _text("Cc"),
+        "labels": json.dumps(_string_list("Labels")),
+        "attachment_count": len(attachments),
+        "attachment_names": json.dumps(attachments),
+        "source_file": _text("SourceFile"),
+        "in_reply_to": _text("InReplyTo"),
+        "references_header": _text("References"),
+        "reply_to": _text("ReplyTo"),
+        "auth_results": _text("AuthenticationResults"),
         "mtime": stat.st_mtime,
         "size": stat.st_size,
     }
@@ -200,11 +241,16 @@ def _write_message(
         """
         INSERT INTO messages (
             report_path, message_id, brand, sender, subject, date, type,
-            scope, timezone, tracking_pixels, tracking_links, mtime, size
+            scope, timezone, tracking_pixels, tracking_links,
+            recipients_to, recipients_cc, labels, attachment_count,
+            attachment_names, source_file, in_reply_to,
+            references_header, reply_to, auth_results, mtime, size
         ) VALUES (
             :report_path, :message_id, :brand, :sender, :subject, :date,
             :type, :scope, :timezone, :tracking_pixels, :tracking_links,
-            :mtime, :size
+            :recipients_to, :recipients_cc, :labels, :attachment_count,
+            :attachment_names, :source_file, :in_reply_to,
+            :references_header, :reply_to, :auth_results, :mtime, :size
         )
         """,
         row,

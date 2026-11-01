@@ -24,7 +24,7 @@ def test_cli_help_and_version():
     assert runner.invoke(app, ["scrape", "--help"]).exit_code == 0
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "gmail-toolkit 2.4.0" in result.output
+    assert "gmail-toolkit 2.5.0" in result.output
 
 
 def test_scrape_writes_sorted_csv(monkeypatch, tmp_path, fake_service):

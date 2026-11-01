@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.5.0 — 2026-11-01
+
+### Added
+
+- SQLite search index over `exports/`, CLI only: `gmail-toolkit index
+  build` (full scan into `exports/index.db`, `--db` to override),
+  `index search <terms>` (FTS5 over brand, sender, subject, and body,
+  best matches first with snippets, `--brand`/`--sender`/`--limit`
+  filters), `index stats` (totals, breakdowns by brand/type/scope,
+  top senders, tracking totals, date span), and `index update`
+  (incremental refresh; a full build when no database exists yet).
+  Labels (`labels.json`) and calendar events are indexed alongside
+  messages. No new dependencies: `sqlite3` and FTS5 are standard
+  library.
+- Index design, as decided: the database is a derived cache, never a
+  store. Each message row records its report's mtime and size, and an
+  update re-scans the directory listing and re-parses only files that
+  are new, changed, or gone; deleting the database is always a valid
+  recovery. Nothing writes to it at archive/import time, so there is
+  exactly one writer and one reader direction. Search terms are
+  sanitised to word characters only (including dropping the bare-word
+  FTS operators AND/OR/NOT/NEAR), so query input cannot reinterpret
+  the FTS query.
+
+### Deliberately not done
+
+- The viewer is NOT wired to the index yet (phase 2, if phase 1 earns
+  it). The file-based viewer is untouched.
+- No per-message label membership in the index: report frontmatter
+  does not carry it, so labels are inventory only.
+- No auto-update on archive/import: run `index update` after adding
+  reports. A manifest trade-off is documented in the module: a report
+  edited in place with identical size and mtime would be missed until
+  a full rebuild.
+
 ## 2.4.0 — 2026-11-01
 
 ### Added

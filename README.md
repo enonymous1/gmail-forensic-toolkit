@@ -156,6 +156,12 @@ gmail-toolkit calendar events --all
 # Browse exports in a browser (read-only, localhost only)
 gmail-toolkit serve
 gmail-toolkit serve --exports-dir exports --port 5000
+
+# Search index (SQLite, derived from exports/ — see below)
+gmail-toolkit index build
+gmail-toolkit index search budgets --brand Example
+gmail-toolkit index stats
+gmail-toolkit index update
 ```
 
 ### Where exports land
@@ -195,6 +201,30 @@ in the report. No `SourceFiles/` cache is written: the `.mbox` file
 itself is the source of truth, so re-importing is the rebuild path and
 `restore rebuild` does not apply to mbox imports.
 
+### Search index (SQLite)
+
+`gmail-toolkit index build` scans `exports/` into a SQLite database at
+`exports/index.db` (override with `--db`), with an FTS5 table over
+brand, sender, subject, and body. `index search <terms>` searches it
+(terms are ANDed; FTS operators in the query are dropped, not
+interpreted), with `--brand`, `--sender`, and `--limit` filters.
+`index stats` prints totals and breakdowns: by brand, type, and
+scope, top senders, tracking totals, and the date span. `index update`
+refreshes the database incrementally after archiving or importing more
+reports; with no database yet it is a full build.
+
+The index is a derived cache, not a store. `exports/` remains the only
+source of truth: each message row records its report's mtime and size,
+and an update re-scans the directory listing and re-parses only files
+that are new, changed, or gone. Deleting `index.db` is always a valid
+recovery. Nothing in the toolkit writes to the database at
+archive/import time, so there is exactly one writer and one reader
+direction (files into database). Labels are indexed as the inventory
+only — report frontmatter does not carry per-message label
+membership, so the index cannot answer "messages with label X". The
+viewer is not wired to the index yet; that is a later step, not part
+of this release.
+
 ### Local viewer (read-only)
 
 `gmail-toolkit serve` starts a browser view over `./exports` (or
@@ -221,7 +251,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.4.0
+ToolkitVersion: 2.5.0
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
@@ -280,7 +310,7 @@ mypy src
 pytest -q
 ```
 
-All 83 tests run offline against fake Gmail/Calendar services and synthetic
+All 88 tests run offline against fake Gmail/Calendar services and synthetic
 fixtures in `tests/conftest.py`; no test touches a live Google API or needs
 credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
 creation) is the remaining check, on your own account, after any change
@@ -307,6 +337,7 @@ src/gmail_toolkit/
   paths.py           Filename sanitising, collision-safe paths, atomic writes
   process_email.py   Payload parsing + forensic Markdown generation
   mbox_parser.py     Takeout .mbox parsing (adapted from mbox-explorer)
+  index_db.py        SQLite + FTS5 index derived from exports/ (a cache)
   viewer.py          Read-only Flask viewer over exports/ (no auth/API imports)
   templates/         Viewer pages (server-rendered, no external assets)
   forensics/         Classifier, header/timezone parsing, tracking scanners
@@ -361,6 +392,7 @@ flowchart LR
     Cal --> Exports
     CLI --> Mbox["mbox import<br/>(Takeout .mbox, offline)"]
     Mbox --> Exports
+    Exports --> Index["index<br/>(SQLite + FTS5, derived cache)"]
     Exports --> Restore["restore rebuild<br/>(offline, from JSON)"]
     Exports --> Viewer["viewer<br/>(Flask, read-only, localhost)"]
 ```

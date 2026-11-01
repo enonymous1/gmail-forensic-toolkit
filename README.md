@@ -1,7 +1,7 @@
 # Gmail Forensic Toolkit
 
 [![CI](https://github.com/enonymous1/gmail-forensic-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/enonymous1/gmail-forensic-toolkit/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License: MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
 
 ## Description
@@ -178,7 +178,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.2.1
+ToolkitVersion: 2.2.2
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
@@ -302,14 +302,14 @@ Release checklist for a maintainer:
 
 ```mermaid
 flowchart LR
-    CLI[gmail-toolkit CLI\n(Typer, one module per group)] --> Auth[auth.py\nOAuth token + services]
-    Auth --> Gmail[gmail_api.py\npaginated + retrying]
-    Auth --> Cal[calendar_api.py\npaginated + retrying]
-    Gmail --> GAPI[Gmail API v1]
-    Cal --> CAPI[Calendar API v3]
-    Gmail --> Exports[exports/\nMarkdown + JSON + CSV]
+    CLI["gmail-toolkit CLI<br/>(Typer, one module per group)"] --> Auth["auth.py<br/>OAuth token + services"]
+    Auth --> Gmail["gmail_api.py<br/>paginated + retrying"]
+    Auth --> Cal["calendar_api.py<br/>paginated + retrying"]
+    Gmail --> GAPI["Gmail API v1"]
+    Cal --> CAPI["Calendar API v3"]
+    Gmail --> Exports["exports/<br/>Markdown + JSON + CSV"]
     Cal --> Exports
-    Exports --> Restore[restore rebuild\n(offline, from JSON)]
+    Exports --> Restore["restore rebuild<br/>(offline, from JSON)"]
 ```
 
 - **Pagination and retries.** List calls follow every `nextPageToken`, so a

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.2.2 — 2026-11-01
+
+README rendering fixes, spotted on the live repo page. No code change.
+
+### Fixed
+
+- The Mermaid architecture diagram failed to render on GitHub
+  ("Parse error ... got 'PS'"). Its node labels were unquoted while
+  containing parentheses, and used `\n` line breaks outside quotes —
+  both invalid in Mermaid's flowchart grammar. Every label is now quoted
+  and breaks use `<br/>`, the documented GitHub-safe form.
+- The License badge rendered as literal markdown text instead of an
+  image. Its shields URL contained a space
+  (`License: MIT-yellow.svg`), and markdown link destinations cannot
+  contain spaces. The URL is now the hyphenated form
+  (`License-MIT-yellow.svg`).
+
 ## 2.2.1 — 2026-10-31
 
 Windows CI fix: the new Windows leg caught a POSIX assumption on its

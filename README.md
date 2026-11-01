@@ -138,6 +138,9 @@ gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --dry-run
 gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --log import.jsonl
 gmail-toolkit mbox verify ~/Takeout/Mail/"All Mail.mbox"
 
+# Import with attachment bytes extracted beside each report
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --extract-attachments
+
 # See what organising would do, then do it
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
@@ -249,7 +252,28 @@ frontmatter: recipients (To, Cc), Gmail labels (label names from
 `X-Gmail-Labels` for Takeout imports; label IDs for API archives),
 threading headers (In-Reply-To, References, Reply-To),
 Authentication-Results, the source Takeout file, and attachment names
-with type and size. Attachment bytes are still never extracted.
+with type and size. Attachment bytes are extracted only when asked:
+
+- `gmail-toolkit mbox import <file.mbox> --extract-attachments`
+  writes each newly imported message's attachments beside its report
+  in a `<stem>.attachments` directory (for example
+  `exports/Individual/sender_at_example_com/2026-07-21_1003_With
+  attachment.attachments/report.pdf`), using atomic writes, with the
+  relative paths recorded in frontmatter (`AttachmentPaths`) and in
+  the index. Filenames from messages are treated as untrusted:
+  directory components are stripped, illegal characters removed,
+  Windows-reserved stems prefixed, and same-name attachments in one
+  message get numeric suffixes, so an extracted file always lands
+  inside its own directory. A failed message leaves no orphaned
+  files behind. Extraction is off by default, because attachments
+  can carry malware and a large Takeout can hold gigabytes of them;
+  run `mbox preview` first — it reports total attachment files and
+  bytes — to size the job. Re-importing does not backfill
+  attachments for messages already imported without the flag; delete
+  the report and re-import to extract for one of those. Extracted
+  attachments are never mistaken for reports: the index and the
+  viewer skip `*.attachments` directories, so even a `.md`
+  attachment is not listed or indexed as a report.
 
 ### Search index (SQLite)
 
@@ -272,7 +296,9 @@ archive/import time, so there is exactly one writer and one reader
 direction (files into database). Schema version 2 adds per-message
 columns for the metadata reports now carry: recipients (To, Cc),
 labels, attachment count and names, the import source file, and
-threading and authentication headers. A version 1 database is
+threading and authentication headers. Version 3 adds
+`attachment_paths`, the relative paths of extracted attachments. A
+database from an older schema is
 detected as a schema mismatch and fully rebuilt on the next update.
 The `labels` table still holds the inventory; per-message membership
 now lives on each message row, though search does not filter by label

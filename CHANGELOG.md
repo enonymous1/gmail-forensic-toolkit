@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.8.0 — 2026-11-01
+
+### Added
+
+- `gmail-toolkit mbox import --extract-attachments`: extracts each
+  newly imported message's attachment bytes beside its report in a
+  `<stem>.attachments` directory, via atomic writes, with relative
+  paths recorded in frontmatter (`AttachmentPaths`) and in the
+  index (schema version 3, auto-rebuilt from older schemas on
+  update). Off by default; the summary reports files extracted and
+  total bytes, and the journal records per-attachment paths and
+  whether each was extracted. Filenames are treated as untrusted
+  (basename only, illegal characters stripped, Windows-reserved
+  stems prefixed, same-name collisions suffixed), and a failed
+  message leaves no orphaned files behind.
+- `mbox preview` now reports total attachment files and bytes, so
+  an extraction job can be sized before running it.
+- The index and the viewer skip `*.attachments` directories when
+  collecting reports, so an extracted `.md` attachment is never
+  indexed or listed as a report.
+
+### Deliberately not done
+
+- Extraction applies to newly imported messages only; re-importing
+  does not backfill attachments for messages already imported
+  without the flag (delete the report and re-import for one of
+  those).
+- The API archive path still does not fetch attachment bytes (that
+  needs a per-attachment API call) and does not record attachment
+  metadata yet; only Takeout imports do.
+- `mbox verify` checks reports, not extracted files; the journal
+  records their paths for auditing.
+
 ## 2.7.0 — 2026-11-01
 
 ### Added

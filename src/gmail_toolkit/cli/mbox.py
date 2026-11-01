@@ -33,11 +33,14 @@ Import contract, mirroring the explorer's ingester:
 - Imported reports carry the metadata the source message carried:
   recipients, Gmail labels, threading and authentication headers,
   the source Takeout file, and attachment names, in frontmatter.
-  Attachment bytes are still never extracted.
+  With ``--extract-attachments``, attachment bytes are extracted
+  beside their report (see below); without it, only metadata is
+  recorded and bytes are never written.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -55,7 +58,9 @@ from ..paths import (
     get_base_filename,
     get_sender_directory,
     next_available_path,
+    sanitize_filename,
     sender_directory_path,
+    write_bytes_atomic,
     write_text_atomic,
 )
 from ..process_email import EmailData, generate_forensic_markdown
@@ -168,21 +173,89 @@ def _to_email_data(parsed: ParsedMboxMessage, message_id: str) -> EmailData:
     }
 
 
-def _attachments_section(attachments: list[AttachmentMeta]) -> str:
-    """Markdown section recording attachment metadata (bytes not kept)."""
+def _attachments_section(
+    attachments: list[AttachmentMeta],
+    extracted: list[str | None] | None = None,
+) -> str:
+    """Markdown section recording attachment metadata.
+
+    With ``extracted`` (one relative path per attachment, or None),
+    each line also says where the bytes went; without it the section
+    states plainly that files were not extracted.
+    """
     lines = [
         "",
         "## Attachments",
         "",
-        "Attachment files were not extracted; only metadata is recorded.",
-        "",
     ]
-    for attachment in attachments:
+    if extracted is None:
+        lines.append("Attachment files were not extracted; only metadata is recorded.")
+    else:
+        lines.append("Attachment files were extracted alongside this report.")
+    lines.append("")
+    for index, attachment in enumerate(attachments):
         name = attachment.filename or "(unnamed)"
-        lines.append(
-            f"- {name} ({attachment.content_type}, {attachment.size_bytes} bytes)"
-        )
+        line = f"- {name} ({attachment.content_type}, {attachment.size_bytes} bytes)"
+        if extracted is not None and extracted[index]:
+            line += f" — extracted to {extracted[index]}"
+        lines.append(line)
     return "\n".join(lines) + "\n"
+
+
+_WINDOWS_RESERVED = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *[f"COM{i}" for i in range(1, 10)],
+    *[f"LPT{i}" for i in range(1, 10)],
+}
+
+
+def _plan_attachment_targets(
+    attach_dir: Path, attachments: list[AttachmentMeta]
+) -> list[tuple[AttachmentMeta, Path]]:
+    """One target path per attachment, collision-free within the message.
+
+    ``next_available_path`` only sees files already on disk, but all
+    of a message's targets are planned before any of them is written,
+    so two attachments with the same name would otherwise plan the
+    same path and the second write would overwrite the first. Track
+    planned targets too, and bump the numeric suffix past them.
+    """
+    planned: list[tuple[AttachmentMeta, Path]] = []
+    used: set[Path] = set()
+    for attachment in attachments:
+        target = next_available_path(
+            attach_dir / _safe_attachment_name(attachment.filename)
+        )
+        while target in used:
+            match = re.match(r"^(.*)_(\d+)$", target.stem)
+            if match:
+                stem = f"{match.group(1)}_{int(match.group(2)) + 1}"
+            else:
+                stem = f"{target.stem}_2"
+            target = target.with_name(f"{stem}{target.suffix}")
+        used.add(target)
+        planned.append((attachment, target))
+    return planned
+
+
+def _safe_attachment_name(filename: str | None) -> str:
+    """A filesystem-safe basename for an attachment filename.
+
+    Filenames come from the message, so they can carry directory
+    traversal (``../../evil.exe``), absolute paths, or
+    Windows-reserved stems. Take the basename, strip illegal
+    characters, and prefix reserved stems, so the extracted file
+    always lands inside its ``.attachments`` directory.
+    """
+    if not filename:
+        return "(unnamed)"
+    cleaned = sanitize_filename(Path(filename).name)
+    if Path(cleaned).stem.upper() in _WINDOWS_RESERVED:
+        cleaned = f"_{cleaned}"
+    return cleaned
 
 
 def import_mbox(
@@ -193,19 +266,33 @@ def import_mbox(
     dry_run: bool = False,
     quiet: bool = False,
     log_path: Path | None = None,
+    extract_attachments: bool = False,
 ) -> dict[str, int]:
     """Import *mbox_path*; return counts of total/imported/duplicates/errors.
 
     With ``dry_run`` set, the same parse/dedupe/filename logic runs but
-    nothing is written: no report files and no directories are created,
-    and ``imported`` counts messages that *would* be imported. With
-    ``quiet`` set, the per-message lines are suppressed; warnings and
-    the final summary still print. With ``log_path`` set, one JSON
-    record per message outcome plus a summary record is appended to
-    that file, so errors and skips survive the terminal.
+    nothing is written: no report files, no directories, and no
+    extracted attachments, and ``imported`` counts messages that
+    *would* be imported. With ``quiet`` set, the per-message lines
+    are suppressed; warnings and the final summary still print. With
+    ``log_path`` set, one JSON record per message outcome plus a
+    summary record is appended to that file, so errors and skips
+    survive the terminal. With ``extract_attachments`` set, each
+    newly imported message's attachments are written beside its
+    report in a ``<stem>.attachments`` directory (never by default:
+    attachments can carry malware, and a large Takeout can hold
+    gigabytes of them). Extraction happens only for newly imported
+    messages, not for duplicates skipped by dedupe.
     """
     _warn_missing_brands(brands_path)
-    counts = {"total": 0, "imported": 0, "duplicates": 0, "errors": 0}
+    counts = {
+        "total": 0,
+        "imported": 0,
+        "duplicates": 0,
+        "errors": 0,
+        "attachments": 0,
+        "attachment_bytes": 0,
+    }
     tracker = _DedupeTracker(exports_dir)
     log_handle = None
     if log_path is not None:
@@ -218,6 +305,8 @@ def import_mbox(
                 break
             counts["total"] += 1
             record_id: str | None = None
+            written: list[Path] = []
+            attach_dir: Path | None = None
             try:
                 parsed = parse_message(msg)
                 message_id = parsed.message_id or _fallback_id(parsed)
@@ -235,10 +324,44 @@ def import_mbox(
                     counts["duplicates"] += 1
                     outcome = "duplicate"
                     report_name: str | None = None
+                    journal_attachments = [
+                        {
+                            "filename": a.filename,
+                            "content_type": a.content_type,
+                            "size_bytes": a.size_bytes,
+                            "path": None,
+                            "extracted": False,
+                        }
+                        for a in parsed.attachments
+                    ]
                 else:
                     email_data = _to_email_data(parsed, message_id)
                     stem = get_base_filename(email_data["date"], email_data["subject"])
                     md_path = next_available_path(sender_dir / f"{stem}.md")
+                    attach_dir = sender_dir / f"{stem}.attachments"
+                    # Plan extraction targets first: frontmatter and
+                    # the journal need the paths whether or not bytes
+                    # are written, and the report needs them before it
+                    # is generated.
+                    planned = _plan_attachment_targets(attach_dir, parsed.attachments)
+                    extracted = extract_attachments and not dry_run
+                    if extracted and planned:
+                        ensure_directory(attach_dir)
+                        for attachment, target in planned:
+                            write_bytes_atomic(target, attachment.data)
+                            written.append(target)
+                            counts["attachments"] += 1
+                            counts["attachment_bytes"] += attachment.size_bytes
+                    journal_attachments = [
+                        {
+                            "filename": attachment.filename,
+                            "content_type": attachment.content_type,
+                            "size_bytes": attachment.size_bytes,
+                            "path": str(target) if extract_attachments else None,
+                            "extracted": bool(extracted),
+                        }
+                        for attachment, target in planned
+                    ]
                     report = generate_forensic_markdown(
                         email_data,
                         brand,
@@ -249,10 +372,28 @@ def import_mbox(
                                 f"({a.content_type}, {a.size_bytes} bytes)"
                                 for a in parsed.attachments
                             ],
+                            "AttachmentPaths": (
+                                [
+                                    f"{attach_dir.name}/{target.name}"
+                                    for _, target in planned
+                                ]
+                                if extract_attachments
+                                else []
+                            ),
                         },
                     )
                     if parsed.attachments:
-                        report += _attachments_section(parsed.attachments)
+                        report += _attachments_section(
+                            parsed.attachments,
+                            extracted=(
+                                [
+                                    f"{attach_dir.name}/{target.name}"
+                                    for _, target in planned
+                                ]
+                                if extracted
+                                else None
+                            ),
+                        )
                     if not dry_run:
                         write_text_atomic(md_path, report)
                     counts["imported"] += 1
@@ -278,12 +419,21 @@ def import_mbox(
                                 "outcome": outcome,
                                 "report": report_name,
                                 "body_sha256": _body_hash(parsed),
+                                "attachments": journal_attachments,
                                 "error": None,
                             }
                         )
                         + "\n"
                     )
             except Exception as exc:  # noqa: BLE001 - resilience is the contract
+                # A failed message must not leave orphaned files: drop
+                # any attachments written before the failure, and the
+                # directory if it is left empty.
+                for target in written:
+                    target.unlink(missing_ok=True)
+                if attach_dir is not None and attach_dir.is_dir():
+                    with contextlib.suppress(OSError):
+                        attach_dir.rmdir()
                 counts["errors"] += 1
                 typer.echo(f"Warning: skipping message {index}: {exc}; continuing.")
                 if log_handle is not None:
@@ -299,6 +449,7 @@ def import_mbox(
                                 "outcome": "error",
                                 "report": None,
                                 "body_sha256": None,
+                                "attachments": [],
                                 "error": str(exc),
                             }
                         )
@@ -352,6 +503,8 @@ def preview_mbox(
         "new": 0,
         "duplicates": 0,
         "with_attachments": 0,
+        "attachment_files": 0,
+        "attachment_bytes": 0,
     }
     tracker = _DedupeTracker(exports_dir)
     messages = iter_mbox(mbox_path)
@@ -393,6 +546,10 @@ def preview_mbox(
                 label_counts[str(label)] += 1
             if parsed.attachments:
                 counts["with_attachments"] += 1
+                counts["attachment_files"] += len(parsed.attachments)
+                counts["attachment_bytes"] += sum(
+                    a.size_bytes for a in parsed.attachments
+                )
             sender_dir = sender_directory_path(
                 exports_dir, brand, parsed.sender_address or parsed.sender
             )
@@ -539,22 +696,41 @@ def import_command(
         "--log",
         help="Append one JSON record per message outcome, plus a summary, to PATH.",
     ),
+    extract_attachments: bool = typer.Option(
+        False,
+        "--extract-attachments",
+        help="Extract attachment bytes beside each new report (off by default).",
+    ),
 ) -> None:
     """Import a Takeout .mbox file as forensic Markdown reports.
 
     Offline: no Gmail API call, no OAuth. Duplicates are skipped, a
     malformed message is counted and skipped, and attachment bytes are
-    never extracted (only metadata is recorded in the report).
+    extracted only with ``--extract-attachments`` (otherwise only
+    metadata is recorded in the report).
     """
     counts = import_mbox(
-        mbox_path, exports_dir, brands_path, limit, dry_run, quiet, log_path
+        mbox_path,
+        exports_dir,
+        brands_path,
+        limit,
+        dry_run,
+        quiet,
+        log_path,
+        extract_attachments,
     )
     verb = "would be imported" if dry_run else "imported"
-    typer.echo(
+    summary = (
         f"\n{counts['imported']} {verb}, {counts['duplicates']} duplicate(s) "
         f"skipped, {counts['errors']} error(s) skipped, "
         f"{counts['total']} read."
     )
+    if extract_attachments:
+        summary += (
+            f" {counts['attachments']} attachment(s) extracted "
+            f"({counts['attachment_bytes']} bytes)."
+        )
+    typer.echo(summary)
 
 
 @app.command()
@@ -600,7 +776,10 @@ def preview(
         f"Against {exports_dir}: {data['new']} new, "
         f"{data['duplicates']} duplicate(s) would be skipped"
     )
-    typer.echo(f"Messages with attachments: {data['with_attachments']}")
+    typer.echo(
+        f"Messages with attachments: {data['with_attachments']} "
+        f"({data['attachment_files']} files, {data['attachment_bytes']} bytes)"
+    )
     typer.echo(f"Unique senders: {data['sender_count']}")
     typer.echo("By brand:")
     for brand, count in cast(list[tuple[str, int]], data["by_brand"]):

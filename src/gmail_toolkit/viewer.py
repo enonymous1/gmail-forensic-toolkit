@@ -24,6 +24,8 @@ import markdown
 import yaml
 from flask import Flask, Response, abort, render_template, request
 
+from .paths import iter_report_paths
+
 # Columns shown on the calendar page. Event CSVs come in two shapes
 # (full events vs upcoming), so only columns present in a row are shown.
 _EVENT_COLUMNS = (
@@ -77,7 +79,7 @@ def _list_reports(root: Path) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
     if not root.is_dir():
         return reports
-    for path in sorted(root.rglob("*.md")):
+    for path in iter_report_paths(root):
         frontmatter, _body = _parse_frontmatter(path.read_text(encoding="utf-8"))
         reports.append(
             {

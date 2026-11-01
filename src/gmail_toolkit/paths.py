@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -75,6 +76,35 @@ def write_text_atomic(path: str | Path, text: str) -> None:
     # CSV's CRLF rows are not doubled on Windows.
     tmp.write_text(text, encoding="utf-8", newline="")
     os.replace(tmp, target)
+
+
+def write_bytes_atomic(path: str | Path, data: bytes) -> None:
+    """Write *data* to *path* via a temp file in the same directory + rename.
+
+    The bytes twin of ``write_text_atomic``: attachment extraction uses
+    it so a crash mid-write cannot leave a truncated attachment that
+    looks complete.
+    """
+    target = Path(path)
+    ensure_directory(target.parent)
+    tmp = target.with_name(f".{target.name}.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, target)
+
+
+def iter_report_paths(root: Path) -> Iterator[Path]:
+    """Every ``*.md`` under *root* except files inside ``*.attachments`` dirs.
+
+    Extracted attachments live beside their report in a
+    ``<stem>.attachments`` directory, so a ``.md`` attachment would
+    otherwise be indexed and listed as a report. Sender directories
+    never end in ``.attachments`` (dots become underscores there), so
+    the only paths this skips are extracted attachments.
+    """
+    for path in sorted(root.rglob("*.md")):
+        if any(part.endswith(".attachments") for part in path.parts[:-1]):
+            continue
+        yield path
 
 
 def next_available_path(path: str | Path) -> Path:

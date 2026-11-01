@@ -311,7 +311,7 @@ def test_schema_v2_columns(tmp_path: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "2"
+    assert version == "3"
     connection.close()
 
 
@@ -367,8 +367,76 @@ def test_update_rebuilds_v1_database(tmp_path: Path, exports_dir: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "2"
+    assert version == "3"
     columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
     assert "labels" in columns
     assert "source_file" in columns
+    connection.close()
+
+
+def test_schema_v3_attachment_paths(tmp_path: Path) -> None:
+    root = tmp_path / "exports"
+    sender_dir = ensure_directory(root / "Example" / "sender_at_example_com")
+    data: EmailData = {
+        "id": "msg-v3",
+        "subject": "With extracted attachment",
+        "sender": "Fictional Sender <sender@example.com>",
+        "date": datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc),
+        "body_html": "",
+        "body_plain": "body",
+        "headers": {"subject": "With extracted attachment", "from": "x"},
+        "raw_json": {},
+    }
+    report = generate_forensic_markdown(
+        data,
+        "Example",
+        extra_frontmatter={
+            "SourceFile": "All Mail.mbox",
+            "Attachments": ["report.pdf (application/pdf, 9 bytes)"],
+            "AttachmentPaths": [
+                "2026-07-21_1000_With extracted attachment.attachments/report.pdf"
+            ],
+        },
+    )
+    (sender_dir / "2026-07-21_1000_With.md").write_text(report, encoding="utf-8")
+    index_db.build_index(root)
+    connection = sqlite3.connect(root / "index.db")
+    connection.row_factory = sqlite3.Row
+    row = connection.execute("SELECT * FROM messages").fetchone()
+    assert json.loads(row["attachment_paths"]) == [
+        "2026-07-21_1000_With extracted attachment.attachments/report.pdf"
+    ]
+    version = connection.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    assert version == "3"
+    connection.close()
+
+
+def test_update_rebuilds_v2_database(tmp_path: Path, exports_dir: Path) -> None:
+    db = exports_dir / "index.db"
+    connection = sqlite3.connect(db)
+    connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    connection.execute("INSERT INTO meta VALUES ('schema_version', '2')")
+    connection.execute(
+        "CREATE TABLE messages ("
+        "report_path TEXT PRIMARY KEY, message_id TEXT, brand TEXT, "
+        "sender TEXT, subject TEXT, date TEXT, type TEXT, scope TEXT, "
+        "timezone TEXT, tracking_pixels INTEGER, tracking_links INTEGER, "
+        "recipients_to TEXT, recipients_cc TEXT, labels TEXT, "
+        "attachment_count INTEGER, attachment_names TEXT, "
+        "source_file TEXT, in_reply_to TEXT, references_header TEXT, "
+        "reply_to TEXT, auth_results TEXT, mtime REAL, size INTEGER)"
+    )
+    connection.commit()
+    connection.close()
+    counts = index_db.update_index(exports_dir)
+    assert counts["messages"] == 3
+    connection = sqlite3.connect(db)
+    version = connection.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    assert version == "3"
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
+    assert "attachment_paths" in columns
     connection.close()

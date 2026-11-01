@@ -8,9 +8,10 @@ the same classification, tracking scan, branding, and Markdown
 generation as an API-archived one.
 
 Deliberate differences from the explorer:
-- No attachment extraction and no database: attachment bytes are never
-  written. Only filename/type/size metadata is kept, and the importer
-  appends it to the report as an Attachments section.
+- No database: attachment bytes are retained on the parsed message
+  (not written by this module) so the importer can extract them when
+  asked; by default it still records only metadata. The explorer
+  extracts by default; the toolkit does not.
 - Dates stay as datetimes (or ``None``), matching ``EmailData``: a
   missing or unparseable Date is never replaced with "now".
 - This module never raises on bad input if it can help it: a corrupt
@@ -42,11 +43,18 @@ _UNSAFE_ATTRS = re.compile(r"^on", re.IGNORECASE)
 
 @dataclass
 class AttachmentMeta:
-    """Metadata for one attachment part; bytes are never retained."""
+    """Metadata for one attachment part, plus its bytes for extraction.
+
+    The bytes are decoded once here and held for the message being
+    processed, so the importer can write them without re-walking the
+    message. Peak memory is one message's attachments, never the file:
+    the file itself still streams.
+    """
 
     filename: str | None
     content_type: str
     size_bytes: int
+    data: bytes = b""
 
 
 @dataclass
@@ -231,13 +239,16 @@ def parse_message(msg: Message) -> ParsedMboxMessage:
             filename = decode_header_value(filename)
 
         if disposition == "attachment" or filename:
-            # Metadata only: the bytes are decoded once for the size
-            # and then dropped, never written to disk.
+            # Bytes are decoded once and retained on the metadata, so
+            # the importer can extract them when asked; by default it
+            # records only this metadata and never writes the bytes.
+            data = decode_payload(part)
             attachments.append(
                 AttachmentMeta(
                     filename=filename,
                     content_type=content_type,
-                    size_bytes=len(decode_payload(part)),
+                    size_bytes=len(data),
+                    data=data,
                 )
             )
             continue

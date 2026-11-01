@@ -105,7 +105,14 @@ def test_import_writes_reports_duplicates_and_fallback_ids(
 ) -> None:
     exports = tmp_path / "exports"
     counts = mbox_module.import_mbox(mbox_file, exports)
-    assert counts == {"total": 5, "imported": 4, "duplicates": 1, "errors": 0}
+    assert counts == {
+        "total": 5,
+        "imported": 4,
+        "duplicates": 1,
+        "errors": 0,
+        "attachments": 0,
+        "attachment_bytes": 0,
+    }
     reports = _read_reports(exports)
     assert len(reports) == 4
     joined = "\n".join(reports)
@@ -134,7 +141,14 @@ def test_rerun_skips_everything(tmp_path: Path, mbox_file: Path) -> None:
     exports = tmp_path / "exports"
     mbox_module.import_mbox(mbox_file, exports)
     counts = mbox_module.import_mbox(mbox_file, exports)
-    assert counts == {"total": 5, "imported": 0, "duplicates": 5, "errors": 0}
+    assert counts == {
+        "total": 5,
+        "imported": 0,
+        "duplicates": 5,
+        "errors": 0,
+        "attachments": 0,
+        "attachment_bytes": 0,
+    }
     assert len(_read_reports(exports)) == 4
 
 
@@ -159,7 +173,14 @@ def test_one_bad_message_does_not_abort_import(
 
     monkeypatch.setattr(mbox_module, "generate_forensic_markdown", flaky)
     counts = mbox_module.import_mbox(mbox_file, tmp_path / "exports")
-    assert counts == {"total": 5, "imported": 3, "duplicates": 1, "errors": 1}
+    assert counts == {
+        "total": 5,
+        "imported": 3,
+        "duplicates": 1,
+        "errors": 1,
+        "attachments": 0,
+        "attachment_bytes": 0,
+    }
 
 
 def test_mbox_cli(
@@ -432,3 +453,166 @@ def test_verify_cli(
     assert result.exit_code == 0, result.output
     assert "missing: 4" in result.output
     assert "Missing reports:" in result.output
+
+
+def test_parser_keeps_attachment_bytes(mbox_file: Path) -> None:
+    from gmail_toolkit.mbox_parser import iter_mbox, parse_message
+
+    for msg in iter_mbox(mbox_file):
+        parsed = parse_message(msg)
+        if parsed.attachments:
+            assert len(parsed.attachments) == 1
+            assert parsed.attachments[0].filename == "report.pdf"
+            assert parsed.attachments[0].size_bytes == 9
+            assert parsed.attachments[0].data == b"%PDF-1.4\n"
+            return
+    raise AssertionError("no attachment found in fixture")
+
+
+def test_safe_attachment_name() -> None:
+    safe = mbox_module._safe_attachment_name
+    assert safe("../../evil.exe") == "evil.exe"
+    assert safe("/tmp/absolute.pdf") == "absolute.pdf"
+    assert safe("CON.txt") == "_CON.txt"
+    assert safe("nul") == "_nul"
+    assert safe(None) == "(unnamed)"
+    assert safe("") == "(unnamed)"
+
+
+def test_import_extracts_attachments(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    log = tmp_path / "import.jsonl"
+    counts = mbox_module.import_mbox(
+        mbox_file, exports, log_path=log, extract_attachments=True
+    )
+    assert counts["attachments"] == 1
+    assert counts["attachment_bytes"] == 9
+    stem = "2026-07-21_1003_With attachment"
+    extracted = exports / "Individual" / "sender_at_example_com" / f"{stem}.attachments"
+    pdf = extracted / "report.pdf"
+    assert pdf.read_bytes() == b"%PDF-1.4\n"
+    report = exports / "Individual" / "sender_at_example_com" / f"{stem}.md"
+    data = _frontmatter_of(report)
+    assert data["AttachmentPaths"] == [f"{stem}.attachments/report.pdf"]
+    assert "extracted to" in report.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    attached = next(r for r in records if r["event"] == "message" and r["attachments"])
+    assert attached["attachments"][0]["extracted"] is True
+    assert attached["attachments"][0]["path"].endswith("report.pdf")
+
+
+def test_import_without_flag_extracts_nothing(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    counts = mbox_module.import_mbox(mbox_file, exports)
+    assert counts["attachments"] == 0
+    assert list(exports.rglob("*.attachments")) == []
+    report = (
+        exports
+        / "Individual"
+        / "sender_at_example_com"
+        / "2026-07-21_1003_With attachment.md"
+    )
+    assert _frontmatter_of(report)["AttachmentPaths"] == []
+    assert "were not extracted" in report.read_text(encoding="utf-8")
+
+
+def test_dry_run_with_flag_extracts_nothing(tmp_path: Path, mbox_file: Path) -> None:
+    exports = tmp_path / "exports"
+    log = tmp_path / "import.jsonl"
+    counts = mbox_module.import_mbox(
+        mbox_file, exports, dry_run=True, log_path=log, extract_attachments=True
+    )
+    assert counts["imported"] == 4
+    assert counts["attachments"] == 0
+    assert not exports.exists()
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    attached = next(r for r in records if r["event"] == "message" and r["attachments"])
+    assert attached["attachments"][0]["extracted"] is False
+    assert ".attachments" in attached["attachments"][0]["path"]
+
+
+def test_extraction_collision_and_traversal(tmp_path: Path) -> None:
+    mbox_text = """From sender@example.com Mon Jul 21 10:00:00 2026
+Message-ID: <multi@example.com>
+From: Fictional Sender <sender@example.com>
+Date: Mon, 21 Jul 2026 10:00:00 -0400
+Subject: Many attachments
+Content-Type: multipart/mixed; boundary="M"
+
+--M
+Content-Type: text/plain; charset="utf-8"
+
+See attached.
+--M
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+Zmlyc3Q=
+--M
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+c2Vjb25k
+--M
+Content-Type: application/octet-stream; name="evil.exe"
+Content-Disposition: attachment; filename="../../evil.exe"
+Content-Transfer-Encoding: base64
+
+ZXZpbA==
+--M--
+"""
+    mbox_file = tmp_path / "multi.mbox"
+    mbox_file.write_text(mbox_text, encoding="utf-8")
+    exports = tmp_path / "exports"
+    counts = mbox_module.import_mbox(mbox_file, exports, extract_attachments=True)
+    assert counts["attachments"] == 3
+    attach_dir = next(exports.rglob("*.attachments"))
+    names = sorted(p.name for p in attach_dir.iterdir())
+    assert names == ["evil.exe", "report.pdf", "report_2.pdf"]
+    assert (attach_dir / "report.pdf").read_bytes() == b"first"
+    assert (attach_dir / "report_2.pdf").read_bytes() == b"second"
+    # Nothing escaped the attachments directory.
+    assert not (tmp_path / "evil.exe").exists()
+    assert not (exports / "evil.exe").exists()
+
+
+def test_md_attachment_is_not_a_report(tmp_path: Path) -> None:
+    from gmail_toolkit import index_db
+    from gmail_toolkit.viewer import _list_reports
+
+    mbox_text = """From sender@example.com Mon Jul 21 10:00:00 2026
+Message-ID: <mdattach@example.com>
+From: Fictional Sender <sender@example.com>
+Date: Mon, 21 Jul 2026 10:00:00 -0400
+Subject: Markdown attachment
+Content-Type: multipart/mixed; boundary="M"
+
+--M
+Content-Type: text/plain; charset="utf-8"
+
+See attached.
+--M
+Content-Type: text/markdown; name="note.md"
+Content-Disposition: attachment; filename="note.md"
+Content-Transfer-Encoding: base64
+
+IyBOb3QgYSByZXBvcnQK
+--M--
+"""
+    mbox_file = tmp_path / "mdattach.mbox"
+    mbox_file.write_text(mbox_text, encoding="utf-8")
+    exports = tmp_path / "exports"
+    mbox_module.import_mbox(mbox_file, exports, extract_attachments=True)
+    attach_dir = next(exports.rglob("*.attachments"))
+    assert (attach_dir / "note.md").read_text() == "# Not a report\n"
+    counts = index_db.build_index(exports)
+    assert counts["messages"] == 1
+    assert len(_list_reports(exports)) == 1
+
+
+def test_preview_attachment_totals(tmp_path: Path, mbox_file: Path) -> None:
+    data = mbox_module.preview_mbox(mbox_file, tmp_path / "exports")
+    assert data["attachment_files"] == 1
+    assert data["attachment_bytes"] == 9

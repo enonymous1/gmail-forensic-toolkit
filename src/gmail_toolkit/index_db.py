@@ -13,14 +13,16 @@ this database at archive/import time — there is exactly one writer
 (the index commands) and one reader direction (files -> database) —
 so the two can never disagree the way two writers can.
 
-Schema (version 2):
+Schema (version 3):
 - ``messages``: one row per ``*.md`` report, keyed by report path.
   Frontmatter fields plus tracking counts from the report's INFO
   block, plus the manifest columns (``mtime``, ``size``). Version 2
-  adds the metadata frontmatter gained at the same time: recipients,
+  added the metadata frontmatter gained at the same time: recipients,
   per-message labels, attachment count and names, the import source
-  file, and threading and authentication headers. A version 1 database
-  is detected as a schema mismatch and fully rebuilt on update.
+  file, and threading and authentication headers. Version 3 adds
+  ``attachment_paths``: where extracted attachments live, relative
+  to their report. A database from an older schema is detected as a
+  mismatch and fully rebuilt on update.
 - ``messages_fts``: FTS5 over brand, sender, subject, and body, with
   the report path as an UNINDEXED column to join back to ``messages``.
   The new structured columns are not FTS terms; they are for exact
@@ -28,6 +30,11 @@ Schema (version 2):
 - ``labels``: the label inventory (``labels.json``), not per-message
   membership — that now lives on each ``messages`` row instead.
 - ``events``: every exported calendar ``events.csv`` row.
+
+Report discovery skips ``*.attachments`` directories (see
+``paths.iter_report_paths``): extracted attachments live beside
+their report, and a ``.md`` attachment must never be indexed or
+listed as a report.
 """
 
 from __future__ import annotations
@@ -40,7 +47,9 @@ from typing import Any
 
 import yaml
 
-SCHEMA_VERSION = "2"
+from .paths import iter_report_paths
+
+SCHEMA_VERSION = "3"
 
 _TRACKING_RE = re.compile(r"Pixels:\s*(\d+),\s*Links:\s*(\d+)")
 
@@ -84,6 +93,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             labels TEXT NOT NULL DEFAULT '[]',
             attachment_count INTEGER NOT NULL DEFAULT 0,
             attachment_names TEXT NOT NULL DEFAULT '[]',
+            attachment_paths TEXT NOT NULL DEFAULT '[]',
             source_file TEXT NOT NULL DEFAULT '',
             in_reply_to TEXT NOT NULL DEFAULT '',
             references_header TEXT NOT NULL DEFAULT '',
@@ -216,6 +226,7 @@ def _parse_report_file(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         "labels": json.dumps(_string_list("Labels")),
         "attachment_count": len(attachments),
         "attachment_names": json.dumps(attachments),
+        "attachment_paths": json.dumps(_string_list("AttachmentPaths")),
         "source_file": _text("SourceFile"),
         "in_reply_to": _text("InReplyTo"),
         "references_header": _text("References"),
@@ -243,13 +254,13 @@ def _write_message(
             report_path, message_id, brand, sender, subject, date, type,
             scope, timezone, tracking_pixels, tracking_links,
             recipients_to, recipients_cc, labels, attachment_count,
-            attachment_names, source_file, in_reply_to,
+            attachment_names, attachment_paths, source_file, in_reply_to,
             references_header, reply_to, auth_results, mtime, size
         ) VALUES (
             :report_path, :message_id, :brand, :sender, :subject, :date,
             :type, :scope, :timezone, :tracking_pixels, :tracking_links,
             :recipients_to, :recipients_cc, :labels, :attachment_count,
-            :attachment_names, :source_file, :in_reply_to,
+            :attachment_names, :attachment_paths, :source_file, :in_reply_to,
             :references_header, :reply_to, :auth_results, :mtime, :size
         )
         """,
@@ -372,7 +383,7 @@ def build_index(
             connection.execute(f"DROP TABLE IF EXISTS {table}")
         _create_schema(connection)
         messages = 0
-        for path in sorted(root.rglob("*.md")):
+        for path in iter_report_paths(root):
             row, body = _parse_report_file(path, root)
             _write_message(connection, row, body)
             messages += 1
@@ -416,7 +427,7 @@ def update_index(
             )
         }
         current: dict[str, tuple[float, int]] = {}
-        for path in sorted(root.rglob("*.md")):
+        for path in iter_report_paths(root):
             stat = path.stat()
             current[path.relative_to(root).as_posix()] = (stat.st_mtime, stat.st_size)
         removed = 0

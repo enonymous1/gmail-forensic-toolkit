@@ -16,6 +16,7 @@ from . import (
     organize_sender,
     restore_metadata,
     scrape_senders,
+    serve,
 )
 
 app = typer.Typer(help="Gmail Forensic Toolkit CLI")
@@ -62,6 +63,10 @@ app.add_typer(get_digest.app, name="digest")
 app.add_typer(restore_metadata.app, name="restore")
 app.add_typer(labels.app, name="labels")
 app.add_typer(calendar.app, name="calendar")
+
+# A top-level command, not a group: serving is a mode switch, and
+# "gmail-toolkit serve" reads better than "gmail-toolkit viewer serve".
+app.command(name="serve")(serve.serve)
 
 
 def main() -> None:

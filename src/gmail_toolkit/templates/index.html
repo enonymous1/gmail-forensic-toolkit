@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Home — Gmail Forensic Toolkit{% endblock %}
+{% block content %}
+<h1>Export overview</h1>
+<p class="meta">Serving <code>{{ exports_dir }}</code></p>
+<ul>
+  <li><a href="/reports">{{ report_count }} report(s)</a> from {{ sender_count }} sender(s) across {{ brand_count }} brand(s)</li>
+  <li><a href="/labels">{{ label_count }} label(s)</a> in the inventory</li>
+  <li><a href="/calendar">{{ event_count }} calendar event(s)</a> exported</li>
+</ul>
+{% if report_count == 0 and label_count == 0 and event_count == 0 %}
+<p>No exports found yet. Run an archive, label inventory, or calendar export first, then reload this page.</p>
+{% endif %}
+{% endblock %}

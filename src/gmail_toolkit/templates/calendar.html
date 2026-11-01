@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Gmail Forensic Toolkit{% endblock %}
+{% block content %}
+<h1>Calendar</h1>
+{% if calendars %}
+<h2>Calendars</h2>
+<table>
+  <tr><th>Calendar Name</th><th>Calendar ID</th></tr>
+  {% for cal in calendars %}
+  <tr><td>{{ cal.get('Calendar Name', '') }}</td><td>{{ cal.get('Calendar ID', '') }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No calendars file found. Run <code>gmail-toolkit calendar calendars</code> first.</p>
+{% endif %}
+{% if events %}
+<h2>Events</h2>
+<table>
+  <tr>{% for col in event_columns %}<th>{{ col }}</th>{% endfor %}</tr>
+  {% for event in events %}
+  <tr>
+    {% for col in event_columns %}
+    <td>{{ event.get(col, '') }}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No exported events found. Run <code>gmail-toolkit calendar events --all</code> or <code>calendar upcoming</code> first.</p>
+{% endif %}
+{% endblock %}

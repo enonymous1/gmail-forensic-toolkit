@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ frontmatter.get('Subject', rel) }} — Gmail Forensic Toolkit{% endblock %}
+{% block content %}
+<h1>{{ frontmatter.get('Subject', rel) }}</h1>
+<p><a href="/raw/{{ rel }}">View raw Markdown</a></p>
+{% if frontmatter %}
+<table>
+  {% for key, value in frontmatter.items() %}
+  <tr><th>{{ key }}</th><td>{{ value }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+<hr>
+{{ body_html | safe }}
+{% endblock %}

@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.3.0 — 2026-11-01
+
+### Added
+
+- Read-only local viewer: `gmail-toolkit serve` starts a Flask app at
+  `http://127.0.0.1:5000` (`--exports-dir`, `--port`) with home counts,
+  a searchable + brand-filtered report list, rendered reports with a
+  raw-Markdown view, the label inventory, and calendars + exported
+  events. Templates ship in the wheel (`package-data` + `MANIFEST.in`,
+  verified by inspecting a built wheel).
+- New dependencies, both with major-version upper bounds: Flask and
+  Markdown (for rendering report bodies). `types-Markdown` joins the dev
+  stubs so `mypy src` stays clean.
+
+### Security design (deliberate)
+
+- Every viewer route is GET-only; there is no POST handler to secure.
+- `viewer.py` never imports the auth or API modules, so it cannot call
+  Gmail or see the OAuth token. Verified: importing the viewer leaves
+  `gmail_toolkit.auth` unimported.
+- Report paths are resolved and checked to stay inside the exports
+  directory (`..`, absolute paths, and escaping symlinks get a 404).
+- The server binds to 127.0.0.1 only and there is no `--host` flag, so
+  the viewer cannot be exposed beyond the machine by accident. It uses
+  Flask's built-in server: fine for a localhost viewer, not a
+  deployment target.
+
+### Deliberately not done
+
+- No run/organize buttons in the viewer: driving Gmail from the browser
+  would need a web OAuth flow and a mutation-capable localhost server,
+  which is a larger security surface than this release takes on. The
+  viewer reads exports; the CLI still does the work.
+- No JavaScript or external assets in the templates: server-rendered
+  pages only, so the viewer works with no network access.
+
 ## 2.2.2 — 2026-11-01
 
 README rendering fixes, spotted on the live repo page. No code change.

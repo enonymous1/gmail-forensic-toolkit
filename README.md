@@ -148,6 +148,10 @@ gmail-toolkit labels details
 gmail-toolkit calendar calendars
 gmail-toolkit calendar upcoming --max-results 10
 gmail-toolkit calendar events --all
+
+# Browse exports in a browser (read-only, localhost only)
+gmail-toolkit serve
+gmail-toolkit serve --exports-dir exports --port 5000
 ```
 
 ### Where exports land
@@ -169,6 +173,23 @@ override flag differs by command:
 Two messages with the same timestamp and subject get a numeric suffix
 instead of overwriting each other.
 
+### Local viewer (read-only)
+
+`gmail-toolkit serve` starts a browser view over `./exports` (or
+`--exports-dir`) at `http://127.0.0.1:5000` (`--port` to change it).
+Routes: home counts, `/reports` with search and brand filter, one
+report rendered as HTML plus a raw-Markdown view, `/labels` for the
+label inventory, and `/calendar` for calendars and exported events.
+
+It is read-only by construction: every route is GET-only, the viewer
+never imports the auth or API modules (so it cannot call Gmail or see
+the OAuth token), and it only reads files already under the exports
+directory — a report path that escapes that directory gets a 404. The
+server binds to localhost only and there is deliberately no `--host`
+flag; it uses Flask's built-in server, which is fine for a local viewer
+and not a deployment target. Never put this viewer behind a public
+server, and never publish real exports to a hosted site.
+
 ### Example report
 
 Example report header, generated from a synthetic fixture message (not a
@@ -178,7 +199,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.2.2
+ToolkitVersion: 2.3.0
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
@@ -237,7 +258,7 @@ mypy src
 pytest -q
 ```
 
-All 70 tests run offline against fake Gmail/Calendar services and synthetic
+All 78 tests run offline against fake Gmail/Calendar services and synthetic
 fixtures in `tests/conftest.py`; no test touches a live Google API or needs
 credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
 creation) is the remaining check, on your own account, after any change
@@ -263,8 +284,11 @@ src/gmail_toolkit/
   branding.py        Domain -> brand resolution
   paths.py           Filename sanitising, collision-safe paths, atomic writes
   process_email.py   Payload parsing + forensic Markdown generation
+  viewer.py          Read-only Flask viewer over exports/ (no auth/API imports)
+  templates/         Viewer pages (server-rendered, no external assets)
   forensics/         Classifier, header/timezone parsing, tracking scanners
   cli/               One Typer module per command group, registered in main.py
+                     (serve is a top-level command, not a group)
 tests/               Fake services + fixtures, one file per area under test
 config/brands.json   Example brand mapping (see Configuration)
 ```
@@ -278,8 +302,11 @@ on new public functions (mypy).
 
 ## Deployment
 
-There is no server to deploy: this is a local CLI, and the deployed unit is
-an install on a machine, not a hosted service. The project is not published
+There is no hosted service to deploy: this is a local CLI, and the
+deployed unit is an install on a machine, not a hosted service. The
+viewer (`gmail-toolkit serve`) is a localhost-only process, not a
+deployment target — do not expose it publicly or publish real exports
+to a hosted site. The project is not published
 to PyPI, so installation is always from a checkout (see Installation).
 
 Release checklist for a maintainer:
@@ -310,6 +337,7 @@ flowchart LR
     Gmail --> Exports["exports/<br/>Markdown + JSON + CSV"]
     Cal --> Exports
     Exports --> Restore["restore rebuild<br/>(offline, from JSON)"]
+    Exports --> Viewer["viewer<br/>(Flask, read-only, localhost)"]
 ```
 
 - **Pagination and retries.** List calls follow every `nextPageToken`, so a

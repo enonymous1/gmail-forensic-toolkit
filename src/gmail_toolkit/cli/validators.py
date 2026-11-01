@@ -26,3 +26,10 @@ def non_negative_int_callback(ctx: Any, param: Any, value: int | None) -> int | 
     if value is not None and value < 0:
         raise typer.BadParameter("must not be negative")
     return value
+
+
+def port_callback(ctx: Any, param: Any, value: int | None) -> int | None:
+    """Require a TCP port number (``None`` passes through)."""
+    if value is not None and not 1 <= value <= 65535:
+        raise typer.BadParameter("must be between 1 and 65535")
+    return value

@@ -1,0 +1,2 @@
+# Viewer templates must ship in the sdist as well as the wheel.
+recursive-include src/gmail_toolkit/templates *.html

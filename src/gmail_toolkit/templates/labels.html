@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Labels — Gmail Forensic Toolkit{% endblock %}
+{% block content %}
+<h1>Label inventory</h1>
+{% if warning %}
+<p class="warning">{{ warning }}</p>
+{% endif %}
+{% if labels %}
+<table>
+  <tr><th>Name</th><th>ID</th><th>Type</th><th>Messages</th><th>Unread</th></tr>
+  {% for label in labels %}
+  <tr>
+    <td>{{ label.get('name', '') }}</td>
+    <td>{{ label.get('id', '') }}</td>
+    <td>{{ label.get('type', '') }}</td>
+    <td>{{ label.get('messagesTotal', '') }}</td>
+    <td>{{ label.get('messagesUnread', '') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif not warning %}
+<p>No label inventory found. Run <code>gmail-toolkit labels inventory</code> first.</p>
+{% endif %}
+{% endblock %}

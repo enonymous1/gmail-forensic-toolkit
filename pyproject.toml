@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gmail-forensic-toolkit"
-version = "2.2.2"
+version = "2.3.0"
 description = "Archive Gmail messages locally as forensic Markdown reports, classify them, organise them with Gmail labels, and export the label inventory and Google Calendar events."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,8 +24,10 @@ classifiers = [
 ]
 dependencies = [
     "beautifulsoup4>=4.12,<5",
+    "flask>=3.0,<4",
     "google-api-python-client>=2.0,<3",
     "google-auth-oauthlib>=1.2,<2",
+    "markdown>=3.0,<4",
     "markdownify>=0.13,<1",
     "PyYAML>=6.0,<7",
     "python-dateutil>=2.8,<3",
@@ -40,6 +42,7 @@ dev = [
     "mypy>=1.0,<2",
     "pytest>=8.0,<9",
     "ruff>=0.4,<1",
+    "types-Markdown>=3.0",
     "types-PyYAML>=6.0",
     "types-python-dateutil>=2.8",
 ]
@@ -50,6 +53,9 @@ Repository = "https://github.com/enonymous1/gmail-forensic-toolkit"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+gmail_toolkit = ["templates/*.html"]
 
 [tool.ruff]
 line-length = 88

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Reports — Gmail Forensic Toolkit{% endblock %}
+{% block content %}
+<h1>Reports</h1>
+<form method="get" action="/reports">
+  <input type="search" name="q" value="{{ query }}" placeholder="Search sender, subject, brand, type">
+  <select name="brand">
+    <option value="">All brands</option>
+    {% for b in brands %}
+    <option value="{{ b }}" {% if b == brand %}selected{% endif %}>{{ b }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+{% if reports %}
+<table>
+  <tr><th>Date</th><th>Brand</th><th>Sender</th><th>Subject</th><th>Type</th><th>Scope</th></tr>
+  {% for r in reports %}
+  <tr>
+    <td>{{ r.date }}</td>
+    <td>{{ r.brand }}</td>
+    <td>{{ r.sender }}</td>
+    <td><a href="/report/{{ r.rel }}">{{ r.subject or r.rel }}</a></td>
+    <td>{{ r.type }}</td>
+    <td>{{ r.scope }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No reports match. Try clearing the search, or run an archive first.</p>
+{% endif %}
+{% endblock %}

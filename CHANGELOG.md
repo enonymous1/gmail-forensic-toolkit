@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.4.0 — 2026-11-01
+
+### Added
+
+- `gmail-toolkit mbox import <file.mbox>`: import a Google Takeout
+  archive as forensic Markdown reports, offline, with no Gmail API call
+  or OAuth. The parser is adapted from the companion mbox-explorer
+  project (same decoding rules: RFC 2047 headers, charset fallbacks,
+  sanitized HTML), but the output flows through the existing forensic
+  pipeline — classification, tracking scan, branding, Markdown reports
+  — into the same `exports/<Brand>/<Sender>/` layout, so the read-only
+  viewer browses imports and API archives alike. Streaming via the
+  standard-library `mailbox` module; no new dependencies.
+- Import contract: duplicates skipped by Message-ID header (including
+  messages already imported by an earlier run); messages without a
+  Message-ID get a deterministic `mbox-<hash>` id so re-runs dedupe
+  them too; a malformed message is counted and skipped, never fatal.
+- The API archive path and the mbox importer now share one
+  `get_sender_directory()` helper in `paths.py`, so both layouts stay
+  identical by construction.
+
+### Deliberately not done
+
+- Attachment bytes are never extracted on import; only filename, type,
+  and size are recorded in the report.
+- No `SourceFiles/` cache for mbox imports: the `.mbox` file itself is
+  the source of truth, so re-importing is the rebuild path and
+  `restore rebuild` does not apply to them.
+- The mbox-explorer project itself was NOT folded in or touched: its
+  SQLite + FTS5 explorer stays standalone, as decided. Only its parser
+  was adapted.
+
 ## 2.3.0 — 2026-11-01
 
 ### Added

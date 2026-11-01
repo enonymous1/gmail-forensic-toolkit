@@ -10,10 +10,9 @@ from ..auth import get_gmail_service
 from ..branding import resolve_brand
 from ..gmail_api import batch_get_messages, list_message_ids
 from ..paths import (
-    ensure_directory,
     get_base_filename,
+    get_sender_directory,
     next_available_path,
-    sanitize_filename,
     write_text_atomic,
 )
 from ..process_email import (
@@ -50,8 +49,7 @@ def archive_contact(
         return 0
 
     brand = resolve_brand(email, brands_path)
-    sender_clean = sanitize_filename(email.replace("@", "_at_").replace(".", "_"))
-    sender_dir = ensure_directory(exports_dir / brand / sender_clean)
+    sender_dir = get_sender_directory(exports_dir, brand, email)
 
     archived = 0
     # One batch call per chunk of messages, not one get per message.

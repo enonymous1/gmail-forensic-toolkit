@@ -126,6 +126,10 @@ gmail-toolkit scrape discovery --max-results 500
 # Archive one sender (exports/<Brand>/<Sender>/)
 gmail-toolkit archive contact sender@example.com --limit 100
 
+# Import a Google Takeout .mbox file instead (same exports layout,
+# offline, no Gmail API call or OAuth)
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --limit 1000
+
 # See what organising would do, then do it
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
@@ -163,6 +167,7 @@ override flag differs by command:
 |---|---|---|
 | `scrape discovery` | `exports/Contact_Directory.csv` | `--output` |
 | `archive contact`, `batch process` | `exports/<Brand>/<Sender>/` | `--exports-dir` |
+| `mbox import` | `exports/<Brand>/<Sender>/` | `--exports-dir` |
 | `labels inventory` | `exports/labels/labels.json` | `--output` |
 | `labels details` | `exports/labels/details/` | `--output-dir` |
 | `calendar calendars` | `exports/calendar/calendars.csv` | `--output` |
@@ -172,6 +177,23 @@ override flag differs by command:
 
 Two messages with the same timestamp and subject get a numeric suffix
 instead of overwriting each other.
+
+### mbox import
+
+`gmail-toolkit mbox import <file.mbox>` is the offline counterpart to
+`archive contact`: it parses a Google Takeout archive with the
+standard-library `mailbox` module (streaming, so multi-gigabyte files
+are never loaded wholesale) and writes the same forensic Markdown
+reports into the same layout, so `gmail-toolkit serve` browses them
+without knowing which source produced them. No Gmail API call, no
+OAuth. Duplicates are skipped by Message-ID header, including messages
+already imported by an earlier run, and messages without a Message-ID
+get a deterministic `mbox-<hash>` id so re-runs dedupe them too. A
+malformed message is counted and skipped, never fatal. Attachment
+bytes are never extracted; only filename, type, and size are recorded
+in the report. No `SourceFiles/` cache is written: the `.mbox` file
+itself is the source of truth, so re-importing is the rebuild path and
+`restore rebuild` does not apply to mbox imports.
 
 ### Local viewer (read-only)
 
@@ -199,7 +221,7 @@ real mailbox):
 ---
 Brand: Example
 Sender: Fictional Sender <sender@example.com>
-ToolkitVersion: 2.3.0
+ToolkitVersion: 2.4.0
 Date: '2026-07-21 10:00:00'
 Timezone: '-0400'
 Subject: 'Security alert: meeting invite'
@@ -258,7 +280,7 @@ mypy src
 pytest -q
 ```
 
-All 78 tests run offline against fake Gmail/Calendar services and synthetic
+All 83 tests run offline against fake Gmail/Calendar services and synthetic
 fixtures in `tests/conftest.py`; no test touches a live Google API or needs
 credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
 creation) is the remaining check, on your own account, after any change
@@ -284,6 +306,7 @@ src/gmail_toolkit/
   branding.py        Domain -> brand resolution
   paths.py           Filename sanitising, collision-safe paths, atomic writes
   process_email.py   Payload parsing + forensic Markdown generation
+  mbox_parser.py     Takeout .mbox parsing (adapted from mbox-explorer)
   viewer.py          Read-only Flask viewer over exports/ (no auth/API imports)
   templates/         Viewer pages (server-rendered, no external assets)
   forensics/         Classifier, header/timezone parsing, tracking scanners
@@ -336,6 +359,8 @@ flowchart LR
     Cal --> CAPI["Calendar API v3"]
     Gmail --> Exports["exports/<br/>Markdown + JSON + CSV"]
     Cal --> Exports
+    CLI --> Mbox["mbox import<br/>(Takeout .mbox, offline)"]
+    Mbox --> Exports
     Exports --> Restore["restore rebuild<br/>(offline, from JSON)"]
     Exports --> Viewer["viewer<br/>(Flask, read-only, localhost)"]
 ```

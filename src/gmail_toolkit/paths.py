@@ -32,6 +32,17 @@ def get_base_filename(date_dt: datetime | None, subject: str) -> str:
     return f"{timestamp}_{clean_subject[:100]}"
 
 
+def get_sender_directory(exports_dir: str | Path, brand: str, email: str) -> Path:
+    """Return the ensured ``exports/<Brand>/<Sender>/`` directory for *email*.
+
+    Shared by the API archive path and the mbox importer so both land in
+    the same layout the viewer browses: ``@`` becomes ``_at_`` and dots
+    become underscores, then illegal filename characters are stripped.
+    """
+    sender_clean = sanitize_filename(email.replace("@", "_at_").replace(".", "_"))
+    return ensure_directory(Path(exports_dir) / brand / sender_clean)
+
+
 def ensure_directory(path: str | Path) -> Path:
     """Create *path* (including parents) if needed and return it as a Path."""
     directory = Path(path)

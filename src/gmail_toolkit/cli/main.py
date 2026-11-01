@@ -13,6 +13,7 @@ from . import (
     calendar,
     get_digest,
     labels,
+    mbox,
     organize_sender,
     restore_metadata,
     scrape_senders,
@@ -63,6 +64,7 @@ app.add_typer(get_digest.app, name="digest")
 app.add_typer(restore_metadata.app, name="restore")
 app.add_typer(labels.app, name="labels")
 app.add_typer(calendar.app, name="calendar")
+app.add_typer(mbox.app, name="mbox")
 
 # A top-level command, not a group: serving is a mode switch, and
 # "gmail-toolkit serve" reads better than "gmail-toolkit viewer serve".

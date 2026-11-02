@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.9.0 — 2026-11-02
+
+### Added
+
+- `gmail-toolkit organize plan`: builds a JSON plan from the analysed
+  reports (one entry per sender: email, brand, label path, report
+  count, sorted by email). Senders group by bare address parsed from
+  frontmatter Sender (display-name variants collapse; reports with no
+  `@` address, including "Unknown Sender", are counted as skipped),
+  brands resolve from the current brands file rather than frontmatter,
+  `.attachments` directories are never scanned, and `--min-count N`
+  leaves out small senders.
+- `gmail-toolkit organize apply <plan.json>`: applies a whole plan to
+  the live inbox — lists labels once (a new label cache, instead of
+  one list call per sender as `organize labels` does), creates missing
+  labels, and moves each sender's inbox messages with one batchModify
+  per sender. `--dry-run` previews the whole plan, `--keep-inbox`
+  tags without removing `INBOX`, `--limit` caps messages per sender,
+  `--log` appends one JSON record per entry plus a summary record,
+  and a failing entry is recorded and skipped rather than aborting
+  the plan. Re-running is safe: already-moved messages no longer
+  match `in:inbox`. The plan file is human-editable, so the reviewed
+  structure — renamed branches, merged brands, dropped senders — is
+  what gets applied, including entries whose `label_path` was deleted
+  (re-derived from `brand`).
+- `gmail_api.create_label` is now public (the `labels().create` call
+  with retry); `get_or_create_label` uses it, so the create path is
+  defined once.
+
+### Deliberately not done
+
+- Restoring Takeout labels message-by-message (the same message gets
+  the same labels it had) is not part of this release: it needs one
+  Message-ID search per message, which is prohibitively slow on a
+  large mailbox. Sender-level organisation is the practical path.
+- No interactive confirmation prompt on apply, by the same rule as
+  `organize labels`: the dry run is the guard, so non-interactive
+  use keeps working.
+
 ## 2.8.0 — 2026-11-01
 
 ### Added

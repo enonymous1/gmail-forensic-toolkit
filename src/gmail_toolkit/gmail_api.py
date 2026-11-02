@@ -396,6 +396,21 @@ def _create_label(service: GmailService, body: dict[str, Any]) -> Any:
     return service.users().labels().create(userId="me", body=body).execute()
 
 
+def create_label(
+    service: GmailService, name: str, settings: Settings | None = None
+) -> str:
+    """Create a label (parents implied by ``/`` in *name*) and return its ID."""
+    body = {
+        "name": name,
+        "labelListVisibility": "labelShow",
+        "messageListVisibility": "show",
+    }
+    created = execute_with_retry(
+        partial(_create_label, service, body), settings=settings
+    )
+    return str(created["id"])
+
+
 def get_or_create_label(
     service: GmailService, label_name: str, settings: Settings | None = None
 ) -> str:
@@ -404,15 +419,7 @@ def get_or_create_label(
         if str(label.get("name", "")).lower() == label_name.lower():
             return str(label["id"])
 
-    body = {
-        "name": label_name,
-        "labelListVisibility": "labelShow",
-        "messageListVisibility": "show",
-    }
-    created = execute_with_retry(
-        partial(_create_label, service, body), settings=settings
-    )
-    return str(created["id"])
+    return create_label(service, label_name, settings=settings)
 
 
 def _batch_modify(service: GmailService, chunk_body: dict[str, Any]) -> Any:

@@ -145,6 +145,12 @@ gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --extract-attachments
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
 
+# Organise the whole analysed structure: build a plan, review/edit it,
+# then apply it to the live inbox
+gmail-toolkit organize plan --exports-dir exports --output organize-plan.json
+gmail-toolkit organize apply organize-plan.json --dry-run
+gmail-toolkit organize apply organize-plan.json --log organize-apply.jsonl
+
 # Batch-archive the top 10 senders from the contact directory
 gmail-toolkit batch process --batch-size 10 --skip 0 --limit 100
 
@@ -274,6 +280,48 @@ with type and size. Attachment bytes are extracted only when asked:
   attachments are never mistaken for reports: the index and the
   viewer skip `*.attachments` directories, so even a `.md`
   attachment is not listed or indexed as a report.
+
+### Organising the live inbox from a plan
+
+The Takeout analysis defines the structure; the live inbox is where it
+gets applied, with the sender as the join key.
+`gmail-toolkit organize plan` scans the reports under `exports/` and
+writes a JSON plan: one entry per sender (email, brand, label path,
+report count), sorted by email. Brands resolve from the *current*
+brands file, not from the reports' frontmatter, so editing the brands
+file after analysis reshapes the plan; `--min-count N` leaves out
+small senders. Review and edit the plan file by hand — rename a
+branch, merge two brands, drop a sender — then apply it:
+
+```bash
+gmail-toolkit organize apply organize-plan.json --dry-run
+gmail-toolkit organize apply organize-plan.json --log organize-apply.jsonl
+```
+
+Apply lists labels once, creates any missing ones, then moves each
+sender's inbox messages under its planned label with one batchModify
+per sender. It removes `INBOX` by default (`--keep-inbox` tags
+without archiving), takes a per-sender `--limit`, and appends one JSON
+record per entry plus a summary record with `--log`. A failing entry
+is recorded and skipped, never fatal to the rest of the plan.
+Re-running apply is safe: already-moved messages no longer match
+`in:inbox`, so they are found zero times.
+
+Two things to know before applying a big plan. First, the live inbox
+is queried per sender at apply time, so messages that arrived after
+the Takeout are covered and messages deleted or archived since are
+skipped — plan counts from the Takeout will not match live counts
+exactly, which is what the dry run is for. Second, the label budget:
+Gmail allows up to 5,000 labels, but Google recommends 500 or fewer
+including nested labels, because more than that slows the account
+down, and every nested label counts separately. A per-sender plan
+with thousands of senders fits the hard cap but passes the
+recommended number; use `--min-count` or a brand-level plan to stay
+inside it. Restoring Takeout labels message-by-message (the same
+message gets the same labels it had) is deliberately not part of
+this: it needs one Message-ID search per message, which is
+prohibitively slow on a large mailbox. Sender-level organisation is
+the practical path.
 
 ### Search index (SQLite)
 

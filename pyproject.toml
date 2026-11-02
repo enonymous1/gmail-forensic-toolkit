@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gmail-forensic-toolkit"
-version = "2.8.0"
+version = "2.9.0"
 description = "Archive Gmail messages locally as forensic Markdown reports, classify them, organise them with Gmail labels, and export the label inventory and Google Calendar events."
 readme = "README.md"
 requires-python = ">=3.10"

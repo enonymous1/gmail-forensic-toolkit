@@ -13,6 +13,7 @@ carries ``id``. Anything else is treated as absent, never as an error.
 
 from __future__ import annotations
 
+import base64
 import logging
 import random
 import time
@@ -270,6 +271,17 @@ def _chunked_batch(
             _batch_execute(service, requests[start : start + chunk_size], settings)
         )
     return results
+
+
+def decode_raw_message(raw: str) -> bytes:
+    """Decode a Gmail API ``format=raw`` payload (base64url, unpadded).
+
+    The API omits padding, so it is restored before decoding; a payload
+    that is not valid base64url raises, as an API anomaly should abort
+    the archive rather than write a corrupt ``.eml``.
+    """
+    padded = raw + "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(padded)
 
 
 def batch_get_messages(

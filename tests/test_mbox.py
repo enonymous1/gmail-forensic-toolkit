@@ -112,6 +112,8 @@ def test_import_writes_reports_duplicates_and_fallback_ids(
         "errors": 0,
         "attachments": 0,
         "attachment_bytes": 0,
+        "eml_files": 0,
+        "eml_bytes": 0,
     }
     reports = _read_reports(exports)
     assert len(reports) == 4
@@ -148,6 +150,8 @@ def test_rerun_skips_everything(tmp_path: Path, mbox_file: Path) -> None:
         "errors": 0,
         "attachments": 0,
         "attachment_bytes": 0,
+        "eml_files": 0,
+        "eml_bytes": 0,
     }
     assert len(_read_reports(exports)) == 4
 
@@ -180,6 +184,8 @@ def test_one_bad_message_does_not_abort_import(
         "errors": 1,
         "attachments": 0,
         "attachment_bytes": 0,
+        "eml_files": 0,
+        "eml_bytes": 0,
     }
 
 

@@ -71,9 +71,12 @@ class FakeMessages:
         self,
         pages: dict[str | None, dict[str, Any]] | None = None,
         messages: dict[str, dict[str, Any]] | None = None,
+        raw_messages: dict[str, str] | None = None,
     ) -> None:
         self.pages = pages or {None: {"messages": []}}
         self.messages = messages or {}
+        # id -> base64url raw payload, returned when get(format="raw").
+        self.raw_messages = raw_messages or {}
         self.list_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
         self.batch_modify_calls: list[dict[str, Any]] = []
@@ -87,6 +90,10 @@ class FakeMessages:
 
     def get(self, **kwargs: Any) -> _Request:
         self.get_calls.append(kwargs["id"])
+        if kwargs.get("format") == "raw":
+            return _Request(
+                {"id": kwargs["id"], "raw": self.raw_messages[kwargs["id"]]}
+            )
         return _Request(self.messages[kwargs["id"]])
 
     def batchModify(self, **kwargs: Any) -> _Request:
@@ -215,8 +222,9 @@ class FakeService:
         messages: dict[str, dict[str, Any]] | None = None,
         labels: list[dict[str, str]] | None = None,
         label_details: dict[str, dict[str, Any] | Exception] | None = None,
+        raw_messages: dict[str, str] | None = None,
     ) -> None:
-        self.messages_api = FakeMessages(pages, messages)
+        self.messages_api = FakeMessages(pages, messages, raw_messages)
         self.labels_api = FakeLabels(labels, label_details)
 
     def users(self) -> FakeUsers:

@@ -30,6 +30,12 @@ Import contract, mirroring the explorer's ingester:
   the terminal. ``verify`` re-streams a file and reconciles it
   against the reports, listing Message-IDs in the file with no
   report — the back-check that proves an import completed.
+- With ``--save-eml``, each newly imported message's raw bytes are
+  saved beside its report as ``<stem>.eml``, with the filename and
+  SHA-256 recorded in frontmatter and in the journal; without it, no
+  raw bytes are kept. ``verify`` checks a saved ``.eml`` exists and
+  its hash matches. ``preview`` reports the total raw size, so the
+  job can be sized first.
 - Imported reports carry the metadata the source message carried:
   recipients, Gmail labels, threading and authentication headers,
   the source Takeout file, and attachment names, in frontmatter.
@@ -63,7 +69,11 @@ from ..paths import (
     write_bytes_atomic,
     write_text_atomic,
 )
-from ..process_email import EmailData, generate_forensic_markdown
+from ..process_email import (
+    EmailData,
+    generate_forensic_markdown,
+    read_report_frontmatter,
+)
 from .validators import positive_int_callback
 
 app = typer.Typer(help="Import messages from a Google Takeout .mbox file.")
@@ -87,13 +97,14 @@ class _DedupeTracker:
     or is already present in its destination sender directory (from an
     earlier import). The existing-directory scan is cached per directory
     for the run, so a large file does not re-read every report per
-    message.
+    message. The same scan backs ``report_path`` for verify's .eml
+    checks.
     """
 
     def __init__(self, exports_dir: Path) -> None:
         self.exports_dir = exports_dir
         self.seen: set[str] = set()
-        self.existing_by_dir: dict[Path, set[str]] = {}
+        self.paths_by_dir: dict[Path, dict[str, Path]] = {}
 
     def is_duplicate(self, message_id: str, sender_dir: Path) -> bool:
         return self.status(message_id, sender_dir) != "missing"
@@ -109,10 +120,16 @@ class _DedupeTracker:
         if message_id in self.seen:
             return "seen"
         self.seen.add(message_id)
-        existing = self.existing_by_dir.setdefault(
-            sender_dir, _existing_message_ids(sender_dir)
+        existing = self.paths_by_dir.setdefault(
+            sender_dir, _report_paths_by_id(sender_dir)
         )
         return "imported" if message_id in existing else "missing"
+
+    def report_path(self, message_id: str, sender_dir: Path) -> Path | None:
+        """Report file holding *message_id* in *sender_dir*, if any."""
+        return self.paths_by_dir.setdefault(
+            sender_dir, _report_paths_by_id(sender_dir)
+        ).get(message_id)
 
 
 def _body_hash(parsed: ParsedMboxMessage) -> str:
@@ -135,11 +152,11 @@ def _fallback_id(parsed: ParsedMboxMessage) -> str:
     return f"mbox-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:12]}"
 
 
-def _existing_message_ids(sender_dir: Path) -> set[str]:
-    """MessageIDs already present in a sender directory's reports."""
-    ids: set[str] = set()
+def _report_paths_by_id(sender_dir: Path) -> dict[str, Path]:
+    """Map MessageID -> report file for a sender directory's reports."""
+    paths: dict[str, Path] = {}
     if not sender_dir.is_dir():
-        return ids
+        return paths
     for path in sender_dir.glob("*.md"):
         try:
             text = path.read_text(encoding="utf-8")
@@ -152,8 +169,17 @@ def _existing_message_ids(sender_dir: Path) -> set[str]:
             continue
         match = _MESSAGE_ID_RE.search(text[4:closing])
         if match:
-            ids.add(match.group(1))
-    return ids
+            paths.setdefault(match.group(1), path)
+    return paths
+
+
+def _sha256_file(path: Path) -> str:
+    """SHA-256 of a file's bytes, streamed so a large .eml stays cheap."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _to_email_data(parsed: ParsedMboxMessage, message_id: str) -> EmailData:
@@ -267,6 +293,7 @@ def import_mbox(
     quiet: bool = False,
     log_path: Path | None = None,
     extract_attachments: bool = False,
+    save_eml: bool = False,
 ) -> dict[str, int]:
     """Import *mbox_path*; return counts of total/imported/duplicates/errors.
 
@@ -282,7 +309,11 @@ def import_mbox(
     report in a ``<stem>.attachments`` directory (never by default:
     attachments can carry malware, and a large Takeout can hold
     gigabytes of them). Extraction happens only for newly imported
-    messages, not for duplicates skipped by dedupe.
+    messages, not for duplicates skipped by dedupe. With ``save_eml``
+    set, each newly imported message's raw bytes are written beside
+    its report as ``<stem>.eml`` (never by default: it duplicates the
+    .mbox on disk, roughly 1x its size), with the filename and SHA-256
+    recorded in frontmatter and in the journal.
     """
     _warn_missing_brands(brands_path)
     counts = {
@@ -292,6 +323,8 @@ def import_mbox(
         "errors": 0,
         "attachments": 0,
         "attachment_bytes": 0,
+        "eml_files": 0,
+        "eml_bytes": 0,
     }
     tracker = _DedupeTracker(exports_dir)
     log_handle = None
@@ -307,6 +340,11 @@ def import_mbox(
             record_id: str | None = None
             written: list[Path] = []
             attach_dir: Path | None = None
+            eml_record: dict[str, object] = {
+                "path": None,
+                "sha256": None,
+                "saved": False,
+            }
             try:
                 parsed = parse_message(msg)
                 message_id = parsed.message_id or _fallback_id(parsed)
@@ -339,6 +377,31 @@ def import_mbox(
                     stem = get_base_filename(email_data["date"], email_data["subject"])
                     md_path = next_available_path(sender_dir / f"{stem}.md")
                     attach_dir = sender_dir / f"{stem}.attachments"
+                    raw_bytes: bytes | None = None
+                    raw_sha: str | None = None
+                    eml_path: Path | None = None
+                    if save_eml:
+                        # The .eml is the message re-serialized from the
+                        # parsed mailbox object (no mbox "From " separator
+                        # line); the recorded hash is of the bytes
+                        # actually written. Write the evidence before the
+                        # report that references it; the failure path
+                        # below removes it if the report then fails, so
+                        # a message ends up with both or neither.
+                        raw_bytes = msg.as_bytes()
+                        raw_sha = hashlib.sha256(raw_bytes).hexdigest()
+                        eml_path = sender_dir / f"{md_path.stem}.eml"
+                        eml_record = {
+                            "path": str(eml_path),
+                            "sha256": raw_sha,
+                            "saved": False,
+                        }
+                        if not dry_run:
+                            write_bytes_atomic(eml_path, raw_bytes)
+                            written.append(eml_path)
+                            counts["eml_files"] += 1
+                            counts["eml_bytes"] += len(raw_bytes)
+                            eml_record["saved"] = True
                     # Plan extraction targets first: frontmatter and
                     # the journal need the paths whether or not bytes
                     # are written, and the report needs them before it
@@ -362,25 +425,29 @@ def import_mbox(
                         }
                         for attachment, target in planned
                     ]
+                    extras: dict[str, object] = {
+                        "SourceFile": str(mbox_path),
+                        "Attachments": [
+                            f"{a.filename or '(unnamed)'} "
+                            f"({a.content_type}, {a.size_bytes} bytes)"
+                            for a in parsed.attachments
+                        ],
+                        "AttachmentPaths": (
+                            [
+                                f"{attach_dir.name}/{target.name}"
+                                for _, target in planned
+                            ]
+                            if extract_attachments
+                            else []
+                        ),
+                    }
+                    if save_eml and eml_path is not None and raw_sha is not None:
+                        extras["RawFile"] = eml_path.name
+                        extras["RawSha256"] = raw_sha
                     report = generate_forensic_markdown(
                         email_data,
                         brand,
-                        extra_frontmatter={
-                            "SourceFile": str(mbox_path),
-                            "Attachments": [
-                                f"{a.filename or '(unnamed)'} "
-                                f"({a.content_type}, {a.size_bytes} bytes)"
-                                for a in parsed.attachments
-                            ],
-                            "AttachmentPaths": (
-                                [
-                                    f"{attach_dir.name}/{target.name}"
-                                    for _, target in planned
-                                ]
-                                if extract_attachments
-                                else []
-                            ),
-                        },
+                        extra_frontmatter=extras,
                     )
                     if parsed.attachments:
                         report += _attachments_section(
@@ -420,6 +487,7 @@ def import_mbox(
                                 "report": report_name,
                                 "body_sha256": _body_hash(parsed),
                                 "attachments": journal_attachments,
+                                "eml": eml_record,
                                 "error": None,
                             }
                         )
@@ -434,6 +502,9 @@ def import_mbox(
                 if attach_dir is not None and attach_dir.is_dir():
                     with contextlib.suppress(OSError):
                         attach_dir.rmdir()
+                # The .eml above was unlinked with the rest, so the
+                # error record must not claim it was saved.
+                eml_record = {"path": None, "sha256": None, "saved": False}
                 counts["errors"] += 1
                 typer.echo(f"Warning: skipping message {index}: {exc}; continuing.")
                 if log_handle is not None:
@@ -450,6 +521,7 @@ def import_mbox(
                                 "report": None,
                                 "body_sha256": None,
                                 "attachments": [],
+                                "eml": eml_record,
                                 "error": str(exc),
                             }
                         )
@@ -505,6 +577,8 @@ def preview_mbox(
         "with_attachments": 0,
         "attachment_files": 0,
         "attachment_bytes": 0,
+        "eml_files": 0,
+        "eml_bytes": 0,
     }
     tracker = _DedupeTracker(exports_dir)
     messages = iter_mbox(mbox_path)
@@ -515,11 +589,14 @@ def preview_mbox(
             counts["total"] += 1
             try:
                 parsed = parse_message(msg)
+                raw_len = len(msg.as_bytes())
             except Exception as exc:  # noqa: BLE001 - resilience is the contract
                 counts["errors"] += 1
                 typer.echo(f"Warning: skipping message {index}: {exc}; continuing.")
                 continue
             message_id = parsed.message_id or _fallback_id(parsed)
+            counts["eml_files"] += 1
+            counts["eml_bytes"] += raw_len
             if parsed.message_id:
                 counts["with_message_id"] += 1
             else:
@@ -586,8 +663,12 @@ def verify_mbox(
     distinct no-ID messages that collided on one fallback id.
     Body hashes are truncated to 64 bits in memory: plenty to tell
     bodies apart, without holding a full hash per message for a huge
-    file. Brand resolution uses the current brands settings, so run
-    verify with the same ``--brands`` the import used.
+    file. For a verified message whose report carries ``RawFile``,
+    the ``.eml`` beside the report is checked too: it must exist, and
+    its SHA-256 must match the frontmatter ``RawSha256``; failures
+    are reported as ``eml_problems``. Brand resolution uses the
+    current brands settings, so run verify with the same ``--brands``
+    the import used.
     """
     _warn_missing_brands(brands_path)
     counts = {
@@ -597,10 +678,12 @@ def verify_mbox(
         "duplicates": 0,
         "missing": 0,
         "collisions": 0,
+        "eml_problems": 0,
     }
     missing_details: list[dict[str, object]] = []
     collision_details: list[dict[str, object]] = []
     error_details: list[dict[str, object]] = []
+    eml_details: list[dict[str, object]] = []
     tracker = _DedupeTracker(exports_dir)
     body_hashes: dict[str, tuple[str, int]] = {}
     messages = iter_mbox(mbox_path)
@@ -643,6 +726,35 @@ def verify_mbox(
                 counts["duplicates"] += 1
             elif status == "imported":
                 counts["verified"] += 1
+                report = tracker.report_path(message_id, sender_dir)
+                if report is not None:
+                    frontmatter = read_report_frontmatter(report)
+                    raw_file = frontmatter.get("RawFile")
+                    if isinstance(raw_file, str) and raw_file:
+                        eml_path = report.parent / raw_file
+                        expected = frontmatter.get("RawSha256")
+                        if not eml_path.is_file():
+                            issue = "missing .eml file"
+                        elif (
+                            isinstance(expected, str)
+                            and expected
+                            and _sha256_file(eml_path) != expected
+                        ):
+                            issue = "hash mismatch"
+                        else:
+                            issue = ""
+                        if issue:
+                            counts["eml_problems"] += 1
+                            eml_details.append(
+                                {
+                                    "message_id": message_id,
+                                    "sender": parsed.sender,
+                                    "subject": parsed.subject,
+                                    "issue": issue,
+                                    "report": str(report),
+                                    "index": index,
+                                }
+                            )
             else:
                 counts["missing"] += 1
                 missing_details.append(
@@ -663,6 +775,7 @@ def verify_mbox(
         "missing_details": missing_details,
         "collision_details": collision_details,
         "error_details": error_details,
+        "eml_details": eml_details,
     }
 
 
@@ -701,13 +814,19 @@ def import_command(
         "--extract-attachments",
         help="Extract attachment bytes beside each new report (off by default).",
     ),
+    save_eml: bool = typer.Option(
+        False,
+        "--save-eml",
+        help="Save each new message's raw bytes as <stem>.eml beside its report.",
+    ),
 ) -> None:
     """Import a Takeout .mbox file as forensic Markdown reports.
 
     Offline: no Gmail API call, no OAuth. Duplicates are skipped, a
     malformed message is counted and skipped, and attachment bytes are
     extracted only with ``--extract-attachments`` (otherwise only
-    metadata is recorded in the report).
+    metadata is recorded in the report). Raw message bytes are saved
+    only with ``--save-eml`` (otherwise only the report is written).
     """
     counts = import_mbox(
         mbox_path,
@@ -718,6 +837,7 @@ def import_command(
         quiet,
         log_path,
         extract_attachments,
+        save_eml,
     )
     verb = "would be imported" if dry_run else "imported"
     summary = (
@@ -729,6 +849,10 @@ def import_command(
         summary += (
             f" {counts['attachments']} attachment(s) extracted "
             f"({counts['attachment_bytes']} bytes)."
+        )
+    if save_eml:
+        summary += (
+            f" {counts['eml_files']} .eml file(s) saved ({counts['eml_bytes']} bytes)."
         )
     typer.echo(summary)
 
@@ -780,6 +904,9 @@ def preview(
         f"Messages with attachments: {data['with_attachments']} "
         f"({data['attachment_files']} files, {data['attachment_bytes']} bytes)"
     )
+    typer.echo(
+        f"Raw messages (.eml): {data['eml_files']} files, {data['eml_bytes']} bytes"
+    )
     typer.echo(f"Unique senders: {data['sender_count']}")
     typer.echo("By brand:")
     for brand, count in cast(list[tuple[str, int]], data["by_brand"]):
@@ -824,7 +951,8 @@ def verify(
     typer.echo(
         f"Verified present: {data['verified']}, "
         f"in-file duplicates: {data['duplicates']}, "
-        f"missing: {data['missing']}, collisions: {data['collisions']}"
+        f"missing: {data['missing']}, collisions: {data['collisions']}, "
+        f".eml problems: {data['eml_problems']}"
     )
     missing = cast(list[dict[str, object]], data["missing_details"])
     if missing:
@@ -848,3 +976,11 @@ def verify(
         typer.echo("Unparseable messages:")
         for item in errors:
             typer.echo(f"  #{item['index']}: {item['error']}")
+    eml_problems = cast(list[dict[str, object]], data["eml_details"])
+    if eml_problems:
+        typer.echo("Raw .eml problems:")
+        for item in eml_problems:
+            typer.echo(
+                f"  {item['message_id']} ({item['issue']}) — {item['sender']} — "
+                f"{str(item['subject'])[:80]}"
+            )

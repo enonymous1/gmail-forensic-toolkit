@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.10.0 — 2026-11-06
+
+### Added
+
+- Raw `.eml` archive (Takeout + live), opt-in and off by default:
+  `mbox import --save-eml`, `archive contact --save-eml`, and
+  `batch process --save-eml`. Each newly imported or archived
+  message's raw bytes are written beside its report as `<stem>.eml`
+  (atomic write, before the report that references it), with the
+  filename and SHA-256 in frontmatter (`RawFile`, `RawSha256`), in
+  the import journal, and in the index (schema version 4, with
+  `eml_path`, `eml_sha256`, `eml_bytes`; older databases auto
+  full-rebuild on update, as before). Takeout bytes come from the
+  streamed mailbox message; live bytes come from one extra batched
+  `format=raw` fetch in the same order (new public
+  `gmail_api.decode_raw_message`, which restores the padding Gmail
+  omits). `mbox preview` reports total raw files and bytes, so the
+  job can be sized first; `mbox verify` checks every saved `.eml`
+  exists and its hash matches frontmatter, reporting problems
+  separately from missing reports; `restore rebuild` preserves a
+  report's `RawFile` link when the `.eml` is still beside it
+  (new shared `process_email.read_report_frontmatter`). A failed
+  import message leaves no orphaned `.eml` behind, and the journal
+  never claims a removed file was saved.
+
+### Deliberately not done
+
+- Backfill for messages already in `exports/` (re-imports skip
+  them as duplicates; re-archives would write duplicate reports).
+  A backfill pass that re-streams the `.mbox` and writes missing
+  `.eml` files is a separate step.
+- The viewer does not serve `.eml` files yet; they are files on
+  disk beside their reports.
+- The Takeout `.eml` is the message re-serialized from the parsed
+  mailbox object, not a byte-exact slice of the `.mbox` (no `From `
+  separator line); the recorded hash is of the bytes written.
+
 ## 2.9.0 — 2026-11-02
 
 ### Added

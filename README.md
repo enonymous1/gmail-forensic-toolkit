@@ -141,6 +141,9 @@ gmail-toolkit mbox verify ~/Takeout/Mail/"All Mail.mbox"
 # Import with attachment bytes extracted beside each report
 gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --extract-attachments
 
+# Import keeping each message's raw bytes beside its report
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --save-eml
+
 # See what organising would do, then do it
 gmail-toolkit organize labels sender@example.com --dry-run
 gmail-toolkit organize labels sender@example.com
@@ -281,6 +284,42 @@ with type and size. Attachment bytes are extracted only when asked:
   viewer skip `*.attachments` directories, so even a `.md`
   attachment is not listed or indexed as a report.
 
+### Raw .eml archive
+
+Reports are the store, but they are not the raw message: the plain
+body is dropped when HTML exists, and the API payload cache is
+Google's parsed representation, not the original bytes. With
+`--save-eml`, each newly imported or archived message's raw bytes are
+saved beside its report as `<stem>.eml`, with the filename and
+SHA-256 recorded in frontmatter (`RawFile`, `RawSha256`), in the
+import journal, and in the index (schema version 4: `eml_path`,
+`eml_sha256`, `eml_bytes`):
+
+```bash
+gmail-toolkit mbox import ~/Takeout/Mail/"All Mail.mbox" --save-eml
+gmail-toolkit archive contact sender@example.com --save-eml
+gmail-toolkit batch process --save-eml
+```
+
+It is opt-in and off by default: a Takeout import duplicates the
+`.mbox` on disk (roughly 1x its size), and a live archive doubles
+the messages.get calls for the run (one extra batched `format=raw`
+fetch, in the same order as the full fetch). `mbox preview` reports
+the total raw size before you commit, and `mbox verify` checks every
+saved `.eml` exists and its hash matches the frontmatter. `restore
+rebuild` preserves a report's `RawFile` link when the `.eml` is
+still beside it.
+
+Two honest limits. The Takeout `.eml` is the message re-serialized
+from the parsed mailbox object, not a byte-exact slice of the `.mbox`
+(no `From ` separator line); the recorded hash is of the bytes
+actually written, so verify is self-consistent either way. And it
+covers newly imported or archived messages only: messages already in
+`exports/` get no `.eml` from a re-run (re-imports skip them as
+duplicates, re-archives would write duplicate reports), so backfill
+is a separate step, not part of this release. The viewer does not
+serve `.eml` files yet; they are files on disk beside their reports.
+
 ### Organising the live inbox from a plan
 
 The Takeout analysis defines the structure; the live inbox is where it
@@ -350,7 +389,8 @@ database from an older schema is
 detected as a schema mismatch and fully rebuilt on the next update.
 The `labels` table still holds the inventory; per-message membership
 now lives on each message row, though search does not filter by label
-yet. The viewer is not wired to the index yet; that is a later step,
+yet. Version 4 adds `eml_path`, `eml_sha256`, and `eml_bytes` for
+saved raw messages (see below). The viewer is not wired to the index yet; that is a later step,
 not part of this release.
 
 ### Local viewer (read-only)

@@ -311,7 +311,7 @@ def test_schema_v2_columns(tmp_path: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "3"
+    assert version == "4"
     connection.close()
 
 
@@ -367,7 +367,7 @@ def test_update_rebuilds_v1_database(tmp_path: Path, exports_dir: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "3"
+    assert version == "4"
     columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
     assert "labels" in columns
     assert "source_file" in columns
@@ -409,7 +409,7 @@ def test_schema_v3_attachment_paths(tmp_path: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "3"
+    assert version == "4"
     connection.close()
 
 
@@ -436,7 +436,7 @@ def test_update_rebuilds_v2_database(tmp_path: Path, exports_dir: Path) -> None:
     version = connection.execute(
         "SELECT value FROM meta WHERE key = 'schema_version'"
     ).fetchone()[0]
-    assert version == "3"
+    assert version == "4"
     columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)")]
     assert "attachment_paths" in columns
     connection.close()

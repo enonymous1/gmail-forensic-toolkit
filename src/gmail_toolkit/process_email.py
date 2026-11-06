@@ -185,6 +185,31 @@ def convert_html_to_markdown(html_content: str) -> str:
     return soup.get_text()
 
 
+def read_report_frontmatter(report_path: Path) -> dict[str, Any]:
+    """Return a report's YAML frontmatter dict, or {} when unreadable.
+
+    The reader side of ``generate_forensic_markdown``: restore and
+    verify need the frontmatter a report already carries (e.g. its
+    ``RawFile`` link) without re-parsing the message.
+    """
+    try:
+        text = Path(report_path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---\n"):
+        return {}
+    closing = text.find("\n---\n", 4)
+    if closing == -1:
+        return {}
+    try:
+        data = yaml.safe_load(text[4:closing]) or {}
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
 def generate_forensic_markdown(
     email_data: EmailData,
     brand: str,

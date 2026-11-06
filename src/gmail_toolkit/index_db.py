@@ -13,7 +13,7 @@ this database at archive/import time — there is exactly one writer
 (the index commands) and one reader direction (files -> database) —
 so the two can never disagree the way two writers can.
 
-Schema (version 3):
+Schema (version 4):
 - ``messages``: one row per ``*.md`` report, keyed by report path.
   Frontmatter fields plus tracking counts from the report's INFO
   block, plus the manifest columns (``mtime``, ``size``). Version 2
@@ -21,7 +21,9 @@ Schema (version 3):
   per-message labels, attachment count and names, the import source
   file, and threading and authentication headers. Version 3 adds
   ``attachment_paths``: where extracted attachments live, relative
-  to their report. A database from an older schema is detected as a
+  to their report. Version 4 adds ``eml_path``, ``eml_sha256``, and
+  ``eml_bytes``: where the saved raw ``.eml`` lives, its hash from
+  frontmatter, and its size from disk. A database from an older schema is detected as a
   mismatch and fully rebuilt on update.
 - ``messages_fts``: FTS5 over brand, sender, subject, and body, with
   the report path as an UNINDEXED column to join back to ``messages``.
@@ -49,7 +51,7 @@ import yaml
 
 from .paths import iter_report_paths
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 _TRACKING_RE = re.compile(r"Pixels:\s*(\d+),\s*Links:\s*(\d+)")
 
@@ -94,6 +96,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             attachment_count INTEGER NOT NULL DEFAULT 0,
             attachment_names TEXT NOT NULL DEFAULT '[]',
             attachment_paths TEXT NOT NULL DEFAULT '[]',
+            eml_path TEXT NOT NULL DEFAULT '',
+            eml_sha256 TEXT NOT NULL DEFAULT '',
+            eml_bytes INTEGER NOT NULL DEFAULT 0,
             source_file TEXT NOT NULL DEFAULT '',
             in_reply_to TEXT NOT NULL DEFAULT '',
             references_header TEXT NOT NULL DEFAULT '',
@@ -209,6 +214,15 @@ def _parse_report_file(path: Path, root: Path) -> tuple[dict[str, Any], str]:
 
     message_id = frontmatter.get("MessageID")
     attachments = _string_list("Attachments")
+    raw_file = _text("RawFile")
+    eml_bytes = 0
+    if raw_file:
+        # The .eml sits beside its report; its size is catalogued
+        # from disk, its hash trusted from frontmatter (written by
+        # the same import/archive run that wrote the file).
+        eml_candidate = path.parent / raw_file
+        if eml_candidate.is_file():
+            eml_bytes = eml_candidate.stat().st_size
     row = {
         "report_path": path.relative_to(root).as_posix(),
         "message_id": None if message_id is None else str(message_id),
@@ -227,6 +241,9 @@ def _parse_report_file(path: Path, root: Path) -> tuple[dict[str, Any], str]:
         "attachment_count": len(attachments),
         "attachment_names": json.dumps(attachments),
         "attachment_paths": json.dumps(_string_list("AttachmentPaths")),
+        "eml_path": raw_file,
+        "eml_sha256": _text("RawSha256"),
+        "eml_bytes": eml_bytes,
         "source_file": _text("SourceFile"),
         "in_reply_to": _text("InReplyTo"),
         "references_header": _text("References"),
@@ -254,13 +271,15 @@ def _write_message(
             report_path, message_id, brand, sender, subject, date, type,
             scope, timezone, tracking_pixels, tracking_links,
             recipients_to, recipients_cc, labels, attachment_count,
-            attachment_names, attachment_paths, source_file, in_reply_to,
+            attachment_names, attachment_paths, eml_path, eml_sha256,
+            eml_bytes, source_file, in_reply_to,
             references_header, reply_to, auth_results, mtime, size
         ) VALUES (
             :report_path, :message_id, :brand, :sender, :subject, :date,
             :type, :scope, :timezone, :tracking_pixels, :tracking_links,
             :recipients_to, :recipients_cc, :labels, :attachment_count,
-            :attachment_names, :attachment_paths, :source_file, :in_reply_to,
+            :attachment_names, :attachment_paths, :eml_path, :eml_sha256,
+            :eml_bytes, :source_file, :in_reply_to,
             :references_header, :reply_to, :auth_results, :mtime, :size
         )
         """,

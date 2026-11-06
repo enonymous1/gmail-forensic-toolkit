@@ -24,6 +24,7 @@ def process_batch(
     limit: int = 100,
     brands_path: Path | None = None,
     exports_dir: Path = Path("exports"),
+    save_eml: bool = False,
 ) -> int:
     """Archive *batch_size* senders from the contact directory, after *skip*.
 
@@ -55,6 +56,7 @@ def process_batch(
             limit=limit,
             brands_path=brands_path,
             exports_dir=exports_dir,
+            save_eml=save_eml,
         )
     return len(targets)
 
@@ -90,6 +92,11 @@ def process(
     brands_path: Path | None = typer.Option(
         None, "--brands", help="Brands JSON file (defaults to built-in brands)."
     ),
+    save_eml: bool = typer.Option(
+        False,
+        "--save-eml",
+        help="Fetch each message raw too; save <stem>.eml beside its report.",
+    ),
 ) -> None:
     """Loop through senders from the Contact_Directory.csv in batches."""
     try:
@@ -101,6 +108,7 @@ def process(
             limit=limit,
             brands_path=brands_path,
             exports_dir=exports_dir,
+            save_eml=save_eml,
         )
     except ValueError as exc:
         typer.echo(str(exc))

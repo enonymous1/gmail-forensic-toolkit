@@ -116,6 +116,9 @@ calendar commands only read.
 
 ## Usage
 
+For the end-to-end path — Takeout in, review, plan, apply to the live
+inbox — see [WORKFLOW.md](WORKFLOW.md).
+
 Commands are grouped: `gmail-toolkit <group> <command>`. Run
 `gmail-toolkit <group> --help` for every option.
 

@@ -1,6 +1,6 @@
 # Workflow: Takeout in, review, plan, apply to the live inbox
 
-For gmail-forensic-toolkit 2.10.1. The whole loop in one place: bring a
+For gmail-forensic-toolkit 2.10.2. The whole loop in one place: bring a
 Google Takeout in, review and analyze it offline, define an
 organization structure from what you found, and apply that structure
 to the live Gmail inbox. Detail for each command lives in

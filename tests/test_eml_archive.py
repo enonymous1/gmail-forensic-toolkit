@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from email.parser import BytesParser
@@ -26,6 +27,20 @@ from gmail_toolkit.process_email import (
 from tests.conftest import FakeService, make_payload
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI colour codes from CLI output.
+
+    When colour is on (e.g. FORCE_COLOR=1 in the environment), Rich
+    renders an option as separate styled spans — ``-``, ``-save``,
+    ``-eml`` — so the literal ``--save-eml`` never appears in the raw
+    output even though the flag is there and works.
+    """
+    return _ANSI_RE.sub("", text)
+
 
 _MBOX = """From sender@example.com Mon Jul 21 10:00:00 2026
 Message-ID: <eml1@example.com>
@@ -404,6 +419,23 @@ def test_archive_save_eml_cli(monkeypatch, tmp_path):
 
 
 def test_save_eml_flags_in_help():
-    assert "--save-eml" in runner.invoke(app, ["mbox", "import", "--help"]).output
-    assert "--save-eml" in runner.invoke(app, ["archive", "contact", "--help"]).output
-    assert "--save-eml" in runner.invoke(app, ["batch", "process", "--help"]).output
+    assert "--save-eml" in _strip_ansi(
+        runner.invoke(app, ["mbox", "import", "--help"]).output
+    )
+    assert "--save-eml" in _strip_ansi(
+        runner.invoke(app, ["archive", "contact", "--help"]).output
+    )
+    assert "--save-eml" in _strip_ansi(
+        runner.invoke(app, ["batch", "process", "--help"]).output
+    )
+
+
+def test_save_eml_flags_in_help_with_color(monkeypatch):
+    """Regression: with colour forced on, the raw help output splits
+    ``--save-eml`` across styled spans, so the plain substring check
+    fails even though the flag is present."""
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    raw = runner.invoke(app, ["mbox", "import", "--help"]).output
+    assert "\x1b[" in raw  # colour really was on for this render
+    assert "--save-eml" not in raw
+    assert "--save-eml" in _strip_ansi(raw)

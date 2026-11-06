@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.10.2 — 2026-11-06
+
+### Fixed
+
+- `test_save_eml_flags_in_help` failed when the environment forces
+  colour on (e.g. `FORCE_COLOR=1`): Rich renders `--save-eml` as
+  separate styled spans (`-`, `-save`, `-eml`), so the literal flag
+  never appears in the raw `--help` output even though the flag is
+  there and works. The test now strips ANSI codes before asserting,
+  with a regression test that forces colour on and pins both sides
+  (raw output lacks the literal flag, stripped output has it). No
+  runtime code change.
+
 ## 2.10.1 — 2026-11-06
 
 ### Changed

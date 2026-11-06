@@ -493,8 +493,9 @@ All 88 tests run offline against fake Gmail/Calendar services and synthetic
 fixtures in `tests/conftest.py`; no test touches a live Google API or needs
 credentials. A live Gmail/Calendar run (OAuth flow, real pagination, label
 creation) is the remaining check, on your own account, after any change
-that touches auth or the API wrappers. CI runs the same gates on Ubuntu
-and Windows across Python 3.10–3.13.
+that touches auth or the API wrappers. CI runs the same gates on Ubuntu,
+Windows, and macOS across Python 3.10–3.13. The macOS leg is verified by
+CI itself on the first run after push, not locally.
 
 Run any command with `--verbose` before the subcommand
 (`gmail-toolkit --verbose scrape ...`) to see debug logging, including

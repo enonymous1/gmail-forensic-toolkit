@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.10.1 — 2026-11-06
+
+### Changed
+
+- CI now runs on macOS as well as Ubuntu and Windows (matrix
+  `ubuntu-latest, windows-latest, macos-latest` × Python 3.10–3.13),
+  so the macOS leg is verified by CI on the first run after push.
+  No code change.
+
 ## 2.10.0 — 2026-11-06
 
 ### Added

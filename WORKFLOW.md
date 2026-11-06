@@ -1,6 +1,6 @@
 # Workflow: Takeout in, review, plan, apply to the live inbox
 
-For gmail-forensic-toolkit 2.10.0. The whole loop in one place: bring a
+For gmail-forensic-toolkit 2.10.1. The whole loop in one place: bring a
 Google Takeout in, review and analyze it offline, define an
 organization structure from what you found, and apply that structure
 to the live Gmail inbox. Detail for each command lives in
@@ -35,6 +35,12 @@ The scopes, and what each is for: `gmail.readonly` (reading messages),
 Only `organize` ever changes labels, and only after you have seen its
 `--dry-run` output. Everything else in this guide is read-only until
 step 4.
+
+On macOS, do not use the system Python (3.9 — too old). Install
+Python 3.10 or newer via Homebrew (`brew install python@3.12`) or the
+python.org installer, and use that `python3` to make the venv;
+activation is the `source .venv/bin/activate` line above. CI runs the
+same gates on Ubuntu, Windows, and macOS.
 
 ## 1. Bring the Takeout in
 
